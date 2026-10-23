@@ -4,7 +4,7 @@ from matplotlib.figure import Figure
 from market import Market
 from model import Model
 from optiontrade import OptionTrade
-from trinomialtree import TrinomialTree
+from tree import Tree
 from blackscholes import BlackScholes
 from greeks import Greeks
 from treeimage import TreeImage
@@ -40,14 +40,15 @@ class PricerApp(object):
     def __init__(self):
         # paramètres choisis dans la barre latérale, lus par run()
         self.params: tuple = ()
+        self.trinomial: bool = True
         self.use_bs: bool = False
 
     # la page : barre latérale, prix, grecques, puis les trois onglets
     def run(self):
-        st.set_page_config(page_title="Pricer arbre trinomial", layout="wide")
-        st.title("Pricer d'options par arbre trinomial")
+        st.set_page_config(page_title="Pricer arbres binomial et trinomial", layout="wide")
+        st.title("Pricer d'options par arbres binomial et trinomial")
         self.params = self._market_sidebar() + self._option_sidebar()
-        self.use_bs = st.sidebar.checkbox("Black-Scholes sur le dernier pas", value=False)
+        self._tree_sidebar()
         self._show_prices()
         self._show_greeks()
         tab_tree, tab_boundary, tab_studies = st.tabs(["Arbre", "Frontière d'exercice", "Études"])
@@ -72,13 +73,14 @@ class PricerApp(object):
         return mkt, mdl, opt
 
     # prix de l'arbre avec et sans dividende, et prix Black-Scholes (None pour une américaine)
+    # (l'arbre binomial ne prend pas en compte le dividende : ses deux prix sont égaux)
     @staticmethod
     @st.cache_data
-    def _prices(p: tuple, last_step_bs: bool) -> tuple:
+    def _prices(p: tuple, trinomial: bool, last_step_bs: bool) -> tuple:
         mkt, mdl, opt = PricerApp._objects(p)
         study: Study = Study(mkt, mdl, opt)
-        price: float = study.tree(mdl.steps, True, mkt, mdl.prune_proba).price_option(opt, last_step_bs)
-        tree0: TrinomialTree = study.tree(mdl.steps, True, study.mkt0, mdl.prune_proba)
+        price: float = study.tree(mdl.steps, trinomial, mkt, mdl.prune_proba).price_option(opt, last_step_bs)
+        tree0: Tree = study.tree(mdl.steps, trinomial, study.mkt0, mdl.prune_proba)
         price0: float = tree0.price_option(opt, last_step_bs)
         bs: float = study.bs_price(opt) if opt.is_european() else None
         return price, price0, bs
@@ -101,13 +103,12 @@ class PricerApp(object):
         bs: BlackScholes = BlackScholes(mkt, PricerApp.PRICING_DATE, opt)
         return bs.delta(), bs.gamma(), bs.vega() * 0.01
 
-    # image svg de l'arbre trinomial, après le pricing de l'option
+    # image svg de l'arbre binomial ou trinomial, après le pricing de l'option
     @staticmethod
     @st.cache_data
-    def _tree_svg(p: tuple) -> str:
+    def _tree_svg(p: tuple, trinomial: bool) -> str:
         mkt, mdl, opt = PricerApp._objects(p)
-        tree: TrinomialTree = TrinomialTree(mkt, mdl, opt.mat_date)
-        tree.build_tree()
+        tree: Tree = Study(mkt, mdl, opt).tree(mdl.steps, trinomial, mkt, mdl.prune_proba)
         tree.price_option(opt)
         return TreeImage(1000, 600, tree, opt).image.as_str()
 
@@ -158,11 +159,19 @@ class PricerApp(object):
         prune: float = st.sidebar.selectbox("Seuil de pruning", [0.0, 1e-7, 1e-6], index=1)
         return mat_days, strike, call_put, ex, steps, prune
 
+    # barre latérale : type d'arbre et méthode du dernier pas
+    def _tree_sidebar(self):
+        tree_type: str = st.sidebar.radio("Arbre", ["trinomial", "binomial"], horizontal=True)
+        self.trinomial = tree_type == "trinomial"
+        self.use_bs = st.sidebar.checkbox("Black-Scholes sur le dernier pas", value=False)
+
     # prix de l'arbre, prix sans dividende et comparaison avec Black-Scholes
     def _show_prices(self):
-        price, price0, bs = PricerApp._prices(self.params, self.use_bs)
+        price, price0, bs = PricerApp._prices(self.params, self.trinomial, self.use_bs)
+        if not self.trinomial and self.params[3] > 0:
+            st.warning("L'arbre binomial ne prend pas en compte le dividende (seul le trinomial le fait).")
         col1, col2, col3 = st.columns(3)
-        col1.metric("Prix arbre trinomial", f"{price:.4f} €")
+        col1.metric("Prix arbre " + ("trinomial" if self.trinomial else "binomial"), f"{price:.4f} €")
         col2.metric("Arbre sans dividende", f"{price0:.4f} €")
         if bs is None:
             col3.metric("Black-Scholes", "européenne seulement")
@@ -178,21 +187,22 @@ class PricerApp(object):
         for i, col in enumerate(st.columns(3)):
             ref: str = "" if refs is None else f"BS : {refs[i]:.5f}"
             col.metric(labels[i], f"{values[i]:.5f}", ref, delta_color="off")
-        if refs is None:
-            st.caption("Black-Scholes : comparaison seulement pour une européenne sans dividende.")
+        st.caption("Grecques calculées avec l'arbre trinomial. Black-Scholes : comparaison seulement"
+                   " pour une européenne sans dividende.")
 
     # onglet arbre : l'image n'est lisible que pour un petit nombre de pas
     def _show_tree(self):
         if self.params[9] > 30:
             st.info("Mettez N ≤ 30 pas pour afficher l'arbre.")
         else:
-            st.image(PricerApp._tree_svg(self.params))
+            st.image(PricerApp._tree_svg(self.params, self.trinomial))
             st.caption("Couleur : valeur de l'option (blanc = 0). Bord rouge : exercice anticipé.")
 
     # onglet frontière d'exercice
     def _show_boundary(self):
         st.pyplot(PricerApp._boundary_figure(self.params))
-        st.caption("Au-dessus de la courbe on garde le put américain, en dessous on l'exerce.")
+        st.caption("Arbre trinomial. Au-dessus de la courbe on garde le put américain,"
+                   " en dessous on l'exerce.")
 
     # onglet études : l'utilisateur choisit le graphe à afficher
     def _show_studies(self):
