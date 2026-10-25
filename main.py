@@ -90,7 +90,7 @@ study.save_csv("trinomial avec pruning", 'convergence_trinomial_pruning.csv')
 save(study.convergence_gap_graph(), '01_convergence_ecart.png')
 save(study.convergence_price_graph(), '07_convergence_prix.png')
 
-# écart avec Black-Scholes selon le strike : nul quand le strike tombe sur un noeud de la maturité
+# écart avec Black-Scholes selon le strike : en arches, avec un minimum sur chaque noeud de la maturité
 print("============= Écart avec Black-Scholes en fonction du strike, 10 pas (graphe 2) =============")
 save(study.strike_gap_graph(10, 80.0, 120.0, 0.1), '02_ecart_strike.png')
 
