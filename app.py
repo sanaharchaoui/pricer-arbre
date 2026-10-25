@@ -14,7 +14,8 @@ from study import Study
 # interface du pricer : python -m streamlit run app.py
 # seule run() est publique, tout le reste est privé (méthodes qui commencent par _)
 class PricerApp(object):
-    PRICING_DATE: datetime.datetime = datetime.datetime(2026, 9, 15)
+    # dates proposées par défaut : celles du projet
+    DEFAULT_DATES: tuple = (datetime.date(2026, 9, 15), datetime.date(2027, 2, 2), datetime.date(2027, 9, 2))
     PRUNE: float = 1e-7
 
     # les graphes d'études : nom -> fonction qui prend l'étude et renvoie la figure
@@ -67,7 +68,8 @@ class PricerApp(object):
         st.set_page_config(page_title="Pricer Arbres Binomial & Trinomial", layout="wide")
         self._inject_custom_theme()
         self._render_header()
-        self.params = self._market_sidebar() + self._option_sidebar() + self._tree_sidebar()
+        self.params = (self._market_sidebar() + self._dates_sidebar() + self._option_sidebar()
+                       + self._tree_sidebar())
         self._show_prices()
         self._show_greeks()
         self._show_tabs()
@@ -112,15 +114,25 @@ class PricerApp(object):
                                         help="Taux d'intérêt continu sans risque.")
         div: float = st.sidebar.number_input("Dividende discret (€)", value=3.0, min_value=0.0,
                                              step=0.5, help="Montant versé à la date ex-dividende.")
-        ex_days: int = st.sidebar.slider("Détachement ex-dividende (jours)", 1, 720, 140,
-                                         help="Nombre de jours entre la date de pricing et l'ex-date.")
-        return spot, vol, rate, div, ex_days
+        return spot, vol, rate, div
+
+    # dates : pricing, ex-dividende et maturité (la maturité doit être après la date de pricing)
+    def _dates_sidebar(self) -> tuple:
+        st.sidebar.markdown("### Dates")
+        pricing, ex_date, mat = PricerApp.DEFAULT_DATES
+        pricing = st.sidebar.date_input("Date de pricing", value=pricing, format="DD/MM/YYYY")
+        ex_date = st.sidebar.date_input("Date ex-dividende", value=ex_date, format="DD/MM/YYYY",
+                                        help="Le dividende n'est pris en compte que si cette date est"
+                                             " après la date de pricing et au plus tard à la maturité.")
+        mat = st.sidebar.date_input("Maturité", value=mat, format="DD/MM/YYYY")
+        if mat <= pricing:
+            st.error("La maturité doit être après la date de pricing.")
+            st.stop()
+        return pricing, ex_date, mat
 
     # paramètres de l'option et de l'arbre
     def _option_sidebar(self) -> tuple:
         st.sidebar.markdown("### Contrat de l'Option")
-        mat_days: int = st.sidebar.slider("Maturité T (jours)", 30, 730, 352,
-                                          help="Durée totale jusqu'à l'expiration du contrat.")
         strike: float = st.sidebar.number_input("Prix d'exercice K (€)", value=101.0, min_value=1.0,
                                                 step=1.0, help="Prix d'achat (call) ou de vente (put).")
         call_put: str = st.sidebar.selectbox("Type de dérivé",
@@ -128,7 +140,7 @@ class PricerApp(object):
         ex: str = st.sidebar.selectbox("Style d'exercice", [OptionTrade.EURO_LABEL, OptionTrade.AMER_LABEL],
                                        help="Européen : exercice à maturité uniquement."
                                             " Américain : exercice possible à tout moment.")
-        return mat_days, strike, call_put, ex
+        return strike, call_put, ex
 
     # modèle : type d'arbre, méthode du dernier pas, nombre de pas et pruning
     def _tree_sidebar(self) -> tuple:
@@ -151,12 +163,16 @@ class PricerApp(object):
     # marché avec dividende, modèle et option à partir des paramètres choisis dans la barre latérale
     @staticmethod
     def _objects(p: tuple) -> tuple:
-        spot, vol, rate, div, ex_days, mat_days, strike, call_put, ex, steps, prune = p
-        date: datetime.datetime = PricerApp.PRICING_DATE
-        mkt: Market = Market(spot, vol, rate, div, date + datetime.timedelta(days=ex_days))
-        mdl: Model = Model(date, steps, prune)
-        opt: OptionTrade = OptionTrade(date + datetime.timedelta(days=mat_days), call_put, ex, strike)
+        spot, vol, rate, div, pricing, ex_date, mat, strike, call_put, ex, steps, prune = p
+        mkt: Market = Market(spot, vol, rate, div, PricerApp._to_datetime(ex_date))
+        mdl: Model = Model(PricerApp._to_datetime(pricing), steps, prune)
+        opt: OptionTrade = OptionTrade(PricerApp._to_datetime(mat), call_put, ex, strike)
         return mkt, mdl, opt
+
+    # une date du calendrier (datetime.date) en datetime.datetime, à minuit, comme dans le reste du projet
+    @staticmethod
+    def _to_datetime(d: datetime.date) -> datetime.datetime:
+        return datetime.datetime(d.year, d.month, d.day)
 
     # prix de l'arbre avec et sans dividende, et prix Black-Scholes (None pour une américaine)
     # (l'arbre binomial ne prend pas en compte le dividende : ses deux prix sont égaux)
@@ -193,7 +209,7 @@ class PricerApp(object):
         mkt, mdl, opt = PricerApp._objects(p)
         if not (opt.is_european() and mkt.div_amount == 0.0):
             return None
-        bs: BlackScholes = BlackScholes(mkt, PricerApp.PRICING_DATE, opt)
+        bs: BlackScholes = BlackScholes(mkt, mdl.price_date, opt)
         return bs.delta(), bs.gamma(), bs.vega() * 0.01
 
     # image svg de l'arbre binomial ou trinomial, après le pricing de l'option
@@ -279,7 +295,7 @@ class PricerApp(object):
 
     # onglet arbre : l'image n'est lisible que pour un petit nombre de pas
     def _show_tree(self):
-        if self.params[9] > 30:
+        if self.params[10] > 30:
             st.info("**Conseil de lisibilité** : sélectionnez **N ≤ 30** dans la barre latérale"
                     " pour afficher l'arbre.")
         else:
