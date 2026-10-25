@@ -105,7 +105,7 @@ class PricerApp(object):
 
     # la page : thème, en-tête, barre latérale, prix, grecques, puis les trois onglets
     def run(self):
-        st.set_page_config(page_title="Pricer Arbres Binomial & Trinomial", page_icon="📊", layout="wide")
+        st.set_page_config(page_title="Pricer Arbres Binomial & Trinomial", layout="wide")
         self._inject_custom_theme()
         self._render_header()
         self.params = self._market_sidebar() + self._option_sidebar() + self._tree_sidebar()
@@ -116,8 +116,8 @@ class PricerApp(object):
     # les trois onglets : arbre, frontière d'exercice, études
     def _show_tabs(self):
         st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
-        tabs: list = st.tabs(["🌳 Visualisation de l'Arbre", "🎯 Frontière d'Exercice S*(t)",
-                              "📈 Études Numériques & Stabilité"])
+        tabs: list = st.tabs(["Visualisation de l'Arbre", "Frontière d'Exercice S*(t)",
+                              "Études Numériques & Stabilité"])
         with tabs[0]:
             self._show_tree()
         with tabs[1]:
@@ -135,7 +135,7 @@ class PricerApp(object):
     # titre et sous-titre de la page
     @staticmethod
     def _render_header():
-        st.title("📈 Pricer d'Options par Arbres Binomial & Trinomial")
+        st.title("Pricer d'Options par Arbres Binomial & Trinomial")
         st.caption("Pricing backward d'options européennes et américaines, avec dividende discret,"
                    " pruning et monitoring des probabilités.")
 
@@ -144,7 +144,7 @@ class PricerApp(object):
     # paramètres du marché, avec le nom du projet en haut (texte simple, sans badge)
     def _market_sidebar(self) -> tuple:
         st.sidebar.markdown("**Projet M2 Quant Dauphine**  \nArbres binomial et trinomial · pruning 1e-7")
-        st.sidebar.markdown("---\n### 🏛️ Paramètres de Marché")
+        st.sidebar.markdown("---\n### Paramètres de Marché")
         spot: float = st.sidebar.number_input("Spot S0 (€)", value=100.0, min_value=1.0, step=1.0,
                                               help="Prix actuel du sous-jacent.")
         vol: float = st.sidebar.slider("Volatilité σ", 0.05, 0.80, 0.20, 0.01,
@@ -159,7 +159,7 @@ class PricerApp(object):
 
     # paramètres de l'option et de l'arbre
     def _option_sidebar(self) -> tuple:
-        st.sidebar.markdown("### 📄 Contrat de l'Option")
+        st.sidebar.markdown("### Contrat de l'Option")
         mat_days: int = st.sidebar.slider("Maturité T (jours)", 30, 730, 352,
                                           help="Durée totale jusqu'à l'expiration du contrat.")
         strike: float = st.sidebar.number_input("Prix d'exercice K (€)", value=101.0, min_value=1.0,
@@ -173,7 +173,7 @@ class PricerApp(object):
 
     # modèle : type d'arbre, méthode du dernier pas, nombre de pas et pruning
     def _tree_sidebar(self) -> tuple:
-        st.sidebar.markdown("### ⚙️ Modèle Numérique")
+        st.sidebar.markdown("### Modèle Numérique")
         tree_type: str = st.sidebar.radio("Architecture de l'arbre", ["trinomial", "binomial"],
                                           horizontal=True,
                                           help="Seul le trinomial prend en compte le dividende discret.")
@@ -268,9 +268,9 @@ class PricerApp(object):
     def _show_prices(self):
         price, price0, bs = PricerApp._prices(self.params, self.trinomial, self.use_bs)
         if not self.trinomial and self.params[3] > 0:
-            st.warning("⚠️ L'arbre binomial ne prend pas en compte le dividende"
+            st.warning("L'arbre binomial ne prend pas en compte le dividende"
                        " (seul le trinomial le fait).")
-        st.markdown("#### 💰 Valorisation du Contrat")
+        st.markdown("#### Valorisation du Contrat")
         col1, col2, col3 = st.columns(3)
         col1.metric("Prix Arbre " + ("Trinomial" if self.trinomial else "Binomial"), f"{price:.4f} €",
                     help="Prix obtenu par pricing backward sur l'arbre.")
@@ -289,7 +289,7 @@ class PricerApp(object):
 
     # grecques de l'arbre, avec Black-Scholes en dessous quand c'est comparable
     def _show_greeks(self):
-        st.markdown("#### ⚡ Sensibilités & Couverture (Grecques)")
+        st.markdown("#### Sensibilités & Couverture (Grecques)")
         values: tuple = PricerApp._greeks(self.params)
         refs: tuple = PricerApp._bs_greeks(self.params)
         labels: list = ["Delta (Δ)", "Gamma (Γ)", "Vega (ν, choc 1% vol)"]
@@ -299,23 +299,23 @@ class PricerApp(object):
         for i, col in enumerate(st.columns(3)):
             ref: str = "" if refs is None else f"Réf. BS : {refs[i]:.5f}"
             col.metric(labels[i], f"{values[i]:.5f}", ref, delta_color="off", help=tooltips[i])
-        st.caption("ℹ️ Grecques calculées avec l'arbre trinomial. Référence Black-Scholes affichée"
+        st.caption("Grecques calculées avec l'arbre trinomial. Référence Black-Scholes affichée"
                    " seulement pour une européenne sans dividende.")
 
     # onglet arbre : l'image n'est lisible que pour un petit nombre de pas
     def _show_tree(self):
         if self.params[9] > 30:
-            st.info("💡 **Conseil de lisibilité** : sélectionnez **N ≤ 30** dans la barre latérale"
+            st.info("**Conseil de lisibilité** : sélectionnez **N ≤ 30** dans la barre latérale"
                     " pour afficher l'arbre.")
         else:
             st.image(PricerApp._tree_svg(self.params, self.trinomial))
-            st.caption("🎨 **Légende** : blanc = valeur nulle | du bleu au vert = valeur croissante"
+            st.caption("**Légende** : blanc = valeur nulle | du bleu au vert = valeur croissante"
                        " | bord rouge = exercice anticipé.")
 
     # onglet frontière d'exercice, avec son explication
     def _show_boundary(self):
         st.pyplot(PricerApp._boundary_figure(self.params))
-        with st.expander("💡 Comprendre la frontière d'exercice S*(t)", expanded=True):
+        with st.expander("Comprendre la frontière d'exercice S*(t)", expanded=True):
             st.markdown("""
 * **Règle d'exercice** : à chaque date $t$, si le spot est sous le prix critique $S^*(t)$, la valeur
   d'exercice immédiat ($K - S$) dépasse la valeur de continuation : **on exerce le put**.
@@ -330,7 +330,7 @@ class PricerApp(object):
     def _show_studies(self):
         name: str = st.selectbox("Sélectionnez l'étude à afficher :", list(PricerApp.STUDIES))
         if name in PricerApp.STUDY_INSIGHTS:
-            st.info(f"📌 **Constat** : {PricerApp.STUDY_INSIGHTS[name]}")
+            st.info(f"**Constat** : {PricerApp.STUDY_INSIGHTS[name]}")
         st.caption("Études faites avec un call européen de même strike et même maturité,"
                    " sur le marché choisi.")
         with st.spinner("Calcul en cours (une seule fois par jeu de paramètres)..."):
