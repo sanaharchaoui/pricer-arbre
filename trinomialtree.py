@@ -102,6 +102,22 @@ class TrinomialTree(Tree):
             n = n.dnode
         return proba, under, option
 
+    # poids des noeuds qui ont une proba de transition négative : somme de leurs probas d'atteinte
+    # (arrive quand le dividende est grand devant le prix de l'action sur une partie de l'arbre)
+    def negative_proba_weight(self) -> float:
+        weight: float = 0.0
+        trunk: TrinomialTrunkNode = self.root
+        while trunk.next_mid is not None:
+            n: TrinomialNode = trunk
+            while n.unode is not None:
+                n = n.unode
+            while n is not None:
+                if n.next_up is not None and min(n.p_up, n.p_mid, n.p_down) < 0:
+                    weight = weight + n.proba
+                n = n.dnode
+            trunk = trunk.next_mid
+        return weight
+
     # proba d'exercice sur la colonne de ce tronc, après le pricing de opt :
     # somme des probas des noeuds où l'option est exercée
     def column_exercise_proba(self, trunk: TrinomialTrunkNode, opt: OptionTrade) -> float:

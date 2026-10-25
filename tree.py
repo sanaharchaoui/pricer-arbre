@@ -62,7 +62,7 @@ class Tree(object):
             n = n.unode
         while n is not None:
             if with_bs:
-                n.calc_bs_price(opt)
+                n.calc_bs_price(opt, trunk)
             else:
                 n.calc_option_price(opt)
             n = n.dnode

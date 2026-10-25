@@ -339,14 +339,21 @@ class Study(object):
                            {"arbre trinomial": (n_list, deltas),
                             "Black-Scholes": (n_list, [bs] * len(n_list))})
 
-    # delta, gamma et vega de l'arbre trinomial à n pas, comparés à Black-Scholes (console)
+    # delta, gamma et vega de l'arbre trinomial à n pas (console) :
+    # sans dividende comparés à Black-Scholes, puis avec le dividende du marché
+    # (avec un dividende discret, Black-Scholes ne donne pas de référence)
     def print_greeks(self, n: int):
-        g: Greeks = Greeks(self.mkt0, Model(self.mdl.price_date, n), self.opt)
         bs: BlackScholes = BlackScholes(self.mkt0, self.mdl.price_date, self.opt)
-        print("   arbre", n, "pas : delta", round(g.delta(), 6), " gamma", round(g.gamma(), 6),
-              " vega (1 %)", round(g.vega() * 0.01, 6))
-        print("   Black-Scholes  : delta", round(bs.delta(), 6), " gamma", round(bs.gamma(), 6),
+        self.print_tree_greeks("arbre sans dividende", self.mkt0, n)
+        print("   Black-Scholes sans dividende : delta", round(bs.delta(), 6), " gamma", round(bs.gamma(), 6),
               " vega (1 %)", round(bs.vega() * 0.01, 6))
+        self.print_tree_greeks("arbre avec dividende", self.mkt, n)
+
+    # une ligne de grecques de l'arbre trinomial à n pas sur le marché mkt
+    def print_tree_greeks(self, label: str, mkt: Market, n: int):
+        g: Greeks = Greeks(mkt, Model(self.mdl.price_date, n), self.opt)
+        print("  ", label, n, "pas : delta", round(g.delta(), 6), " gamma", round(g.gamma(), 6),
+              " vega (1 %)", round(g.vega() * 0.01, 6))
 
     # ==================== frontière d'exercice (graphe 13) ====================
 
@@ -357,7 +364,8 @@ class Study(object):
         for mkt in (self.mkt0, self.mkt):
             name: str = "put américain, dividende " + str(mkt.div_amount)
             curves[name] = self.boundary(self.tree(n, True, mkt, prune), self.option(PUT, AMER))
-            print("  ", name, ": premier exercice anticipé le", curves[name][0][0].date())
+            first: str = "aucun" if len(curves[name][0]) == 1 else "le " + str(curves[name][0][0].date())
+            print("  ", name, ": premier exercice anticipé :", first)
         fig: Figure = self.figure("Frontière d'exercice du put américain (" + str(n) + " pas)", "Date",
                                   curves)
         fig.axes[0].axvline(self.mkt.div_ex_date, color="grey", linestyle="--", label="date ex-dividende")

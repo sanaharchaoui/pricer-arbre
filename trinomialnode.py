@@ -23,6 +23,11 @@ class TrinomialNode(Node):
             return 0.0
         return trunk.div
 
+    # valeur actuelle du dividende payé pendant le pas suivant : D actualisé de l'ex-date à aujourd'hui
+    # (div_cap capitalise jusqu'à la date suivante, df actualise d'un pas)
+    def dividend_pv(self, trunk: TrinomialTrunkNode) -> float:
+        return self.dividend(trunk) * trunk.div_cap * self.tree.df
+
     # espérance à la date d'après
     def expectation(self, trunk: TrinomialTrunkNode) -> float:
         return self.forward() - self.dividend(trunk) * trunk.div_cap
@@ -51,23 +56,27 @@ class TrinomialNode(Node):
             self.next_down.proba = self.next_down.proba + self.proba * self.p_down
 
     # l'option est exercée sur ce noeud : à maturité si le payoff est positif,
-    # avant la maturité seulement pour une américaine, quand sa valeur est le payoff
+    # avant la maturité seulement pour une américaine, quand exercer vaut strictement plus que garder
+    # (un noeud pruné n'a qu'un noeud suivant, sa valeur "garder" est approchée : on ne le compte pas)
     def is_exercised(self, opt: OptionTrade) -> bool:
         payoff: float = opt.pay_off(self.under_price)
         if self.next_mid is None:
             return payoff > 0
-        return opt.is_american() and payoff > 0 and self.option_price == payoff
+        return opt.is_american() and self.next_up is not None and payoff > self.hold_value() + 1e-10
 
-    # dernière date : payoff, sinon moyenne actualisée des noeuds suivants (seulement next_mid si pruné)
+    # valeur si on garde l'option : moyenne actualisée des noeuds suivants (seulement next_mid si pruné)
+    def hold_value(self) -> float:
+        value: float = self.p_mid * self.next_mid.option_price
+        if self.next_up is not None:
+            value = value + self.p_up * self.next_up.option_price + self.p_down * self.next_down.option_price
+        return self.tree.df * value
+
+    # dernière date : payoff, sinon valeur si on garde (et le max avec le payoff pour une américaine)
     def calc_option_price(self, opt: OptionTrade):
         if self.next_mid is None:
             self.option_price = opt.pay_off(self.under_price)
         else:
-            value: float = self.p_mid * self.next_mid.option_price
-            if self.next_up is not None:
-                value = value + self.p_up * self.next_up.option_price \
-                    + self.p_down * self.next_down.option_price
-            value = self.tree.df * value
+            value: float = self.hold_value()
             if opt.is_american():
                 value = max(value, opt.pay_off(self.under_price))
             self.option_price = value

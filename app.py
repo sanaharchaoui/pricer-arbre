@@ -56,47 +56,6 @@ class PricerApp(object):
         font-size: 0.95rem; }
     </style>"""
 
-    # notes d'analyse affichées au-dessus de chaque graphe d'étude
-    STUDY_INSIGHTS: dict = {
-        # convergence et strike
-        "01 - Écart x nombre de pas":
-            "L'erreur décroît en 1/N. Le binomial oscille fortement entre N pair et N impair,"
-            " le trinomial converge de façon beaucoup plus régulière.",
-        "02 - Écart selon le strike (10 pas)":
-            "L'écart forme des arches entre deux noeuds de la maturité : entre deux noeuds, le prix"
-            " de l'arbre est linéaire en K alors que Black-Scholes est convexe. L'écart est minimal"
-            " sur les noeuds.",
-        "03 - Américaine - européenne selon le taux":
-            "Sans dividende, la prime d'exercice anticipé est portée par le call quand r < 0 et par"
-            " le put quand r > 0 ; à r = 0 les deux prix sont égaux. Le dividende rend le call"
-            " américain plus cher.",
-        "05 - Temps avec et sans pruning":
-            "Le pruning (seuil 1e-7) supprime environ 91 % des noeuds à 1000 pas et divise le temps"
-            " de calcul par plus de 10, pour un écart de prix d'environ 1e-6 €.",
-        "06 - Dernier pas : écart x nombre de pas":
-            "Black-Scholes sur le dernier pas (en N-1) supprime l'oscillation. Avec le trinomial,"
-            " l'erreur devient environ 100 fois plus petite qu'avec la valeur intrinsèque.",
-        "07 - Prix selon le nombre de pas":
-            "Les prix binomial et trinomial convergent vers Black-Scholes ; le binomial en oscillant,"
-            " le trinomial beaucoup plus régulièrement.",
-        # exercice américain et dividende
-        "08 - Probabilité d'exercice par date":
-            "Avec nos paramètres, le put américain avec dividende n'est jamais exercé avant la date"
-            " ex-dividende, et le call américain avec dividende l'est juste avant cette date.",
-        "09 - Prix selon la date ex-dividende":
-            "Plus le dividende est détaché tard, plus le call américain vaut cher par rapport au call"
-            " européen : on peut exercer juste avant le détachement.",
-        "10 - Tronc avec dividende":
-            "Le tronc (le forward) chute du montant du dividende capitalisé à la date ex-dividende.",
-        # dernier pas et grecques
-        "11 - Dernier pas : écart selon le strike":
-            "Black-Scholes en N-1 supprime les arches de l'écart selon le strike : la courbe du"
-            " trinomial devient presque plate.",
-        "12 - Delta selon le nombre de pas":
-            "Le delta lu sur les noeuds de la première date converge vers le delta de Black-Scholes"
-            " quand N augmente.",
-    }
-
     def __init__(self):
         # paramètres choisis dans la barre latérale, lus par run()
         self.params: tuple = ()
@@ -212,6 +171,13 @@ class PricerApp(object):
         bs: float = study.bs_price(opt) if opt.is_european() else None
         return price, price0, bs
 
+    # poids des noeuds de l'arbre trinomial qui ont une proba de transition négative
+    @staticmethod
+    @st.cache_data
+    def _negative_weight(p: tuple) -> float:
+        mkt, mdl, opt = PricerApp._objects(p)
+        return Study(mkt, mdl, opt).tree(mdl.steps, True, mkt, mdl.prune_proba).negative_proba_weight()
+
     # delta, gamma et vega (pour 1 % de vol) de l'arbre trinomial
     @staticmethod
     @st.cache_data
@@ -270,6 +236,7 @@ class PricerApp(object):
         if not self.trinomial and self.params[3] > 0:
             st.warning("L'arbre binomial ne prend pas en compte le dividende"
                        " (seul le trinomial le fait).")
+        self._show_negative_warning()
         st.markdown("#### Valorisation du Contrat")
         col1, col2, col3 = st.columns(3)
         col1.metric("Prix Arbre " + ("Trinomial" if self.trinomial else "Binomial"), f"{price:.4f} €",
@@ -277,6 +244,14 @@ class PricerApp(object):
         col2.metric("Arbre (Marché sans dividende)", f"{price0:.4f} €",
                     help="Prix sur le même arbre, sans dividende.")
         self._show_bs(col3, price0, bs)
+
+    # avertissement si des probas de transition sont négatives (dividende grand devant le prix de l'action)
+    def _show_negative_warning(self):
+        weight: float = PricerApp._negative_weight(self.params)
+        if self.trinomial and weight > 1e-6:
+            st.warning("Le dividende est grand devant le prix de l'action sur une partie de l'arbre :"
+                       " des probabilités de transition sont négatives sur des noeuds atteints avec"
+                       f" une probabilité totale de {weight:.2%}. Le prix est moins fiable.")
 
     # carte Black-Scholes : écart avec l'arbre sans dividende, ou N/A pour une américaine
     def _show_bs(self, col: object, price0: float, bs: float):
@@ -312,25 +287,14 @@ class PricerApp(object):
             st.caption("**Légende** : blanc = valeur nulle | du bleu au vert = valeur croissante"
                        " | bord rouge = exercice anticipé.")
 
-    # onglet frontière d'exercice, avec son explication
+    # onglet frontière d'exercice : comment lire le graphe
     def _show_boundary(self):
         st.pyplot(PricerApp._boundary_figure(self.params))
-        with st.expander("Comprendre la frontière d'exercice S*(t)", expanded=True):
-            st.markdown("""
-* **Règle d'exercice** : à chaque date $t$, si le spot est sous le prix critique $S^*(t)$, la valeur
-  d'exercice immédiat ($K - S$) dépasse la valeur de continuation : **on exerce le put**.
-* **Effet du dividende discret** : avec nos paramètres, le put américain **n'est jamais exercé avant la
-  date ex-dividende**. Le détenteur attend la baisse du cours de $D$ euros au détachement. Après
-  l'ex-date, la frontière redevient celle du put sans dividende.
-* **À l'échéance** : la valeur temps disparaît et la frontière rejoint le strike : $S^*(t) \\to K$
-  quand $t \\to T$.
-            """)
+        st.caption("Au-dessus de la courbe on garde le put américain, en dessous on l'exerce.")
 
-    # onglet études : l'utilisateur choisit le graphe, avec une note sur le résultat
+    # onglet études : l'utilisateur choisit le graphe à afficher
     def _show_studies(self):
         name: str = st.selectbox("Sélectionnez l'étude à afficher :", list(PricerApp.STUDIES))
-        if name in PricerApp.STUDY_INSIGHTS:
-            st.info(f"**Constat** : {PricerApp.STUDY_INSIGHTS[name]}")
         st.caption("Études faites avec un call européen de même strike et même maturité,"
                    " sur le marché choisi.")
         with st.spinner("Calcul en cours (une seule fois par jeu de paramètres)..."):

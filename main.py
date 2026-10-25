@@ -21,21 +21,21 @@ def save(fig: Figure, file_name: str):
 
 # =============== PARAMÈTRES DU MARCHÉ ===============
 # Spot, Volatilité, Taux d'intérêt, Montant du dividende, Date ex-div
-div_ex_date = datetime.datetime(2027, 2, 2)
-mkt = Market(100.0, 0.20, 0.03, 0.0, div_ex_date)
-mkt_div = Market(100.0, 0.20, 0.03, 3.0, div_ex_date)
+div_ex_date = datetime.datetime(2027, 4, 21)
+mkt = Market(100.0, 0.30, 0.03, 0.0, div_ex_date)
+mkt_div = Market(100.0, 0.30, 0.03, 4.0, div_ex_date)
 
 
 # =============== PARAMÈTRES DU MODÈLE ===============
 # Date de pricing et nombre de pas (seuil de pruning, 0 = pas de pruning)
-mdl = Model(datetime.datetime(2026, 9, 15), 10)
+mdl = Model(datetime.datetime(2026, 9, 1), 300)
 prune_proba = 1e-7
 
 
 # =============== PARAMÈTRES DE L'OPTION ===============
 # maturité, call / put, européenne / américaine, strike
-maturity = datetime.datetime(2027, 9, 2)
-opt = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.EURO_LABEL, 101.0)
+maturity = datetime.datetime(2027, 6, 28)
+opt = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.AMER_LABEL, 100.0)
 
 
 #  =============== CONSTRUCTION DES ARBRES BINOMIAL ET TRINOMIAL ===============
@@ -61,7 +61,7 @@ print("K = forward, call - put :", tree.price_option(call_f) - tree.price_option
 
 # 2. arbre trinomial avec dividende, call américain : exercice juste avant la date ex-div
 print("============= Arbre trinomial avec dividende, call américain =============")
-amer_call = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.AMER_LABEL, 101.0)
+amer_call = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.AMER_LABEL, 100.0)
 tri_tree = TrinomialTree(mkt_div, mdl, maturity)
 tri_tree.build_tree()
 print(amer_call, "avec un arbre trinomial et un dividende :", tri_tree.price_option(amer_call))
@@ -134,11 +134,11 @@ study.print_dividend_approximation(500, 4.0, maturity - datetime.timedelta(days=
 
 # même option avec le binomial, le trinomial et le trinomial avec l'espace du binomial
 print("============= Arbres sans dividende, 100 pas =============")
-study.print_tree_comparison(100)
+study.print_tree_comparison(mdl.steps)
 
 # delta, gamma et vega de l'arbre comparés à Black-Scholes, puis le delta selon le nombre de pas
 print("============= Grecques de l'arbre trinomial (graphe 12) =============")
-study.print_greeks(100)
+study.print_greeks(mdl.steps)
 save(study.delta_graph(list(range(10, 301, 10))), '12_delta.png')
 
 # frontière d'exercice du put américain : sans exercice avant la date ex-dividende

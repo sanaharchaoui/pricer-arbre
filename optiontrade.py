@@ -1,7 +1,9 @@
 import datetime as datetime
 
 
+# l'option : maturité, call ou put, européenne ou américaine, strike
 class OptionTrade(object):
+    # textes possibles pour le type et l'exercice
     CALL_LABEL: str = 'Call'
     PUT_LABEL: str = 'Put'
     AMER_LABEL: str = 'américain'
@@ -15,10 +17,12 @@ class OptionTrade(object):
         self.definition_ok = (self.is_a_call() or self.is_a_put()) \
             and (self.is_european() or self.is_american()) and k >= 0
 
+    # texte affiché par print(option)
     def __str__(self) -> str:
         return self.opt_type + ' ' + self.exercice + ' ' + self.mat_date.strftime("%d-%m-%Y") \
             + ' @' + str(self.strike)
 
+    # True si l'option est américaine (même idée pour les trois méthodes suivantes)
     def is_american(self) -> bool:
         return self.exercice == OptionTrade.AMER_LABEL
 

@@ -23,6 +23,7 @@ class Node(object):
         # valeur de l'option sur ce noeud
         self.option_price: float = None
 
+    # prix forward sur un pas : S x exp(r delta_t)
     def forward(self) -> float:
         return self.under_price * math.exp(self.tree.mkt.int_rate * self.tree.delta_t)
 
@@ -40,12 +41,18 @@ class Node(object):
 
     # AUTRE MÉTHODE POUR CALCULER LE PRIX DE L'OPTION AU DERNIER NOEUD
     # date N-1 : il reste un seul pas avant la maturité, on prend le prix Black-Scholes sur delta_t
-    # (spot = prix du noeud) ; pour une américaine on garde le max avec la valeur intrinsèque
-    def calc_bs_price(self, opt: OptionTrade):
-        mkt: Market = Market(self.under_price, self.tree.mkt.volatility, self.tree.mkt.int_rate, 0.0, None)
+    # (spot = prix du noeud moins le dividende du dernier pas s'il y en a un)
+    # pour une américaine on garde le max avec la valeur intrinsèque
+    def calc_bs_price(self, opt: OptionTrade, trunk: TrunkNode):
+        spot: float = self.under_price - self.dividend_pv(trunk)
+        mkt: Market = Market(spot, self.tree.mkt.volatility, self.tree.mkt.int_rate, 0.0, None)
         bs: BlackScholes = BlackScholes(mkt, opt.mat_date, opt)
         bs.mat_time = self.tree.delta_t
         value: float = bs.price()
         if opt.is_american():
             value = max(value, opt.pay_off(self.under_price))
         self.option_price = value
+
+    # valeur actuelle du dividende payé pendant le pas suivant : 0 dans l'arbre binomial (pas de dividende)
+    def dividend_pv(self, trunk: TrunkNode) -> float:
+        return 0.0
