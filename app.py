@@ -12,9 +12,9 @@ from study import Study
 
 
 # interface du pricer : python -m streamlit run app.py
-# seule run() est publique, tout le reste est privé (méthodes qui commencent par _)
+# seule run() est publique, le reste est privé 
 class PricerApp(object):
-    # dates proposées par défaut : celles du projet
+    # dates proposées par défaut qui se modiifent dans l'interface
     DEFAULT_DATES: tuple = (datetime.date(2026, 9, 15), datetime.date(2027, 2, 2), datetime.date(2027, 9, 2))
     PRUNE: float = 1e-7
 
@@ -106,7 +106,7 @@ class PricerApp(object):
 
     # paramètres du marché, avec le nom du projet en haut (texte simple, sans badge)
     def _market_sidebar(self) -> tuple:
-        st.sidebar.markdown("**Projet M2 Quant Dauphine**  \nArbres binomial et trinomial · pruning 1e-7")
+        st.sidebar.markdown("**Projet M2 272 Dauphine**  \nArbres binomial et trinomial · pruning 1e-7")
         st.sidebar.markdown("---\n### Paramètres de Marché")
         spot: float = st.sidebar.number_input("Spot S0 (€)", value=100.0, min_value=1.0, step=1.0,
                                               help="Prix actuel du sous-jacent.")
@@ -197,10 +197,7 @@ class PricerApp(object):
         return Study(mkt, mdl, opt).tree(mdl.steps, True, mkt, mdl.prune_proba).negative_proba_weight()
 
     # delta, gamma, vega, vomma, vanna (pour 1 % de vol) et theta (1 jour) de l'arbre trinomial,
-    # avec la même méthode du dernier pas que le prix
-    # delta et gamma : choc de 1 % sur le spot avec Black-Scholes au dernier pas ; avec la valeur
-    # intrinsèque, le prix est linéaire entre deux noeuds et le choc donne un gamma faux (souvent 0),
-    # on prend alors les trois noeuds de la date de pricing
+    # delta et gamma : choc de 1 % sur le spot avec Black-Scholes au dernier pas
     @staticmethod
     @st.cache_data
     def _greeks(p: tuple, last_step_bs: bool) -> tuple:
@@ -263,7 +260,7 @@ class PricerApp(object):
             st.info("L'arbre binomial ne gère pas le dividende discret : le prix est calculé"
                     " avec l'arbre trinomial.")
         self._show_negative_warning()
-        st.markdown("#### Valorisation du Contrat")
+        st.markdown("#### Valorisation")
         col1, col2, col3 = st.columns(3)
         trinomial: bool = self.trinomial or self._has_dividend()
         col1.metric("Prix Arbre " + ("Trinomial" if trinomial else "Binomial"), f"{price:.4f} €",
