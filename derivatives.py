@@ -13,3 +13,8 @@ class OneDimDerivative(object):
     # différence centrée : (f(x + shift) - f(x - shift)) / (2 shift)
     def first(self, x: float) -> float:
         return (self.f(self.param, x + self.shift) - self.f(self.param, x - self.shift)) / (2 * self.shift)
+
+    # dérivée seconde : (f(x + shift) - 2 f(x) + f(x - shift)) / shift²
+    def second(self, x: float) -> float:
+        return (self.f(self.param, x + self.shift) - 2 * self.f(self.param, x)
+                + self.f(self.param, x - self.shift)) / self.shift ** 2

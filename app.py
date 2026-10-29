@@ -38,6 +38,8 @@ class PricerApp(object):
         "11 - Dernier pas : écart selon le strike":
             lambda s: s.last_step_strike_graph(10, 0.7 * s.opt.strike, 1.3 * s.opt.strike, 0.25),
         "12 - Delta selon le nombre de pas": lambda s: s.delta_graph(list(range(10, 201, 10))),
+        "14 - Temps de calcul selon le nombre de pas":
+            lambda s: PricerApp._with_convergence(s).run_time_graph(["binomial", "trinomial"], 50),
     }
 
     # style de la page : cartes des métriques (bordure, ombre, petit mouvement au survol) et onglets
@@ -147,7 +149,7 @@ class PricerApp(object):
         st.sidebar.markdown("### Modèle Numérique")
         tree_type: str = st.sidebar.radio("Architecture de l'arbre", ["trinomial", "binomial"],
                                           horizontal=True,
-                                          help="Seul le trinomial prend en compte le dividende discret.")
+                                          help="Avec un dividende, le binomial passe au trinomial.")
         self.trinomial = tree_type == "trinomial"
         self.use_bs = st.sidebar.checkbox("Black-Scholes sur le dernier pas (N-1)", value=False,
                                           help="Black-Scholes sur delta_t au lieu de la valeur intrinsèque.")
@@ -175,7 +177,7 @@ class PricerApp(object):
         return datetime.datetime(d.year, d.month, d.day)
 
     # prix de l'arbre avec et sans dividende, et prix Black-Scholes (None pour une américaine)
-    # (l'arbre binomial ne prend pas en compte le dividende : ses deux prix sont égaux)
+    # (avec un dividende, Study passe du binomial au trinomial)
     @staticmethod
     @st.cache_data
     def _prices(p: tuple, trinomial: bool, last_step_bs: bool) -> tuple:
@@ -194,13 +196,19 @@ class PricerApp(object):
         mkt, mdl, opt = PricerApp._objects(p)
         return Study(mkt, mdl, opt).tree(mdl.steps, True, mkt, mdl.prune_proba).negative_proba_weight()
 
-    # delta, gamma et vega (pour 1 % de vol) de l'arbre trinomial
+    # delta, gamma, vega, vomma, vanna (pour 1 % de vol) et theta (1 jour) de l'arbre trinomial,
+    # avec la même méthode du dernier pas que le prix
+    # delta et gamma : choc de 1 % sur le spot avec Black-Scholes au dernier pas ; avec la valeur
+    # intrinsèque, le prix est linéaire entre deux noeuds et le choc donne un gamma faux (souvent 0),
+    # on prend alors les trois noeuds de la date de pricing
     @staticmethod
     @st.cache_data
-    def _greeks(p: tuple) -> tuple:
+    def _greeks(p: tuple, last_step_bs: bool) -> tuple:
         mkt, mdl, opt = PricerApp._objects(p)
-        g: Greeks = Greeks(mkt, mdl, opt)
-        return g.delta(), g.gamma(), g.vega() * 0.01
+        g: Greeks = Greeks(mkt, mdl, opt, last_step_bs)
+        delta: float = g.delta_shift() if last_step_bs else g.delta()
+        gamma: float = g.gamma_shift() if last_step_bs else g.gamma()
+        return delta, gamma, g.vega() * 0.01, g.vomma() * 0.0001, g.vanna() * 0.01, g.theta()
 
     # grecques Black-Scholes, seulement si elles sont comparables : option européenne et pas de dividende
     @staticmethod
@@ -210,22 +218,24 @@ class PricerApp(object):
         if not (opt.is_european() and mkt.div_amount == 0.0):
             return None
         bs: BlackScholes = BlackScholes(mkt, mdl.price_date, opt)
-        return bs.delta(), bs.gamma(), bs.vega() * 0.01
+        tomorrow: datetime.datetime = mdl.price_date + datetime.timedelta(days=1)
+        theta: float = BlackScholes(mkt, tomorrow, opt).price() - bs.price()
+        return bs.delta(), bs.gamma(), bs.vega() * 0.01, bs.vomma() * 0.0001, bs.vanna() * 0.01, theta
 
-    # image svg de l'arbre binomial ou trinomial, après le pricing de l'option
+    # image svg de l'arbre binomial ou trinomial, après le pricing de l'option (même méthode du dernier pas)
     @staticmethod
     @st.cache_data
-    def _tree_svg(p: tuple, trinomial: bool) -> str:
+    def _tree_svg(p: tuple, trinomial: bool, last_step_bs: bool) -> str:
         mkt, mdl, opt = PricerApp._objects(p)
         tree: Tree = Study(mkt, mdl, opt).tree(mdl.steps, trinomial, mkt, mdl.prune_proba)
-        tree.price_option(opt)
+        tree.price_option(opt, last_step_bs)
         return TreeImage(1000, 600, tree, opt).image.as_str()
 
-    # convergences binomiale et trinomiale jusqu'à 150 pas, utilisées par les graphes 1 et 7
+    # convergences binomiale et trinomiale jusqu'à 150 pas, utilisées par les graphes 1, 7 et 14
     @staticmethod
     def _with_convergence(study: Study) -> Study:
-        study.convergence("binomial", 150, False)
-        study.convergence("trinomial", 150, True)
+        study.convergence("binomial", list(range(1, 151)), False)
+        study.convergence("trinomial", list(range(1, 151)), True)
         return study
 
     # graphe d'étude choisi, sur le marché choisi, avec un call européen de même strike et même maturité
@@ -249,22 +259,28 @@ class PricerApp(object):
     # prix de l'arbre, prix sans dividende et comparaison avec Black-Scholes
     def _show_prices(self):
         price, price0, bs = PricerApp._prices(self.params, self.trinomial, self.use_bs)
-        if not self.trinomial and self.params[3] > 0:
-            st.warning("L'arbre binomial ne prend pas en compte le dividende"
-                       " (seul le trinomial le fait).")
+        if not self.trinomial and self._has_dividend():
+            st.info("L'arbre binomial ne gère pas le dividende discret : le prix est calculé"
+                    " avec l'arbre trinomial.")
         self._show_negative_warning()
         st.markdown("#### Valorisation du Contrat")
         col1, col2, col3 = st.columns(3)
-        col1.metric("Prix Arbre " + ("Trinomial" if self.trinomial else "Binomial"), f"{price:.4f} €",
+        trinomial: bool = self.trinomial or self._has_dividend()
+        col1.metric("Prix Arbre " + ("Trinomial" if trinomial else "Binomial"), f"{price:.4f} €",
                     help="Prix obtenu par pricing backward sur l'arbre.")
         col2.metric("Arbre (Marché sans dividende)", f"{price0:.4f} €",
                     help="Prix sur le même arbre, sans dividende.")
         self._show_bs(col3, price0, bs)
 
+    # True si le dividende tombe après la date de pricing et au plus tard à la maturité
+    def _has_dividend(self) -> bool:
+        mkt, mdl, opt = PricerApp._objects(self.params)
+        return mkt.has_dividend(mdl.price_date, opt.mat_date)
+
     # avertissement si des probas de transition sont négatives (dividende grand devant le prix de l'action)
     def _show_negative_warning(self):
         weight: float = PricerApp._negative_weight(self.params)
-        if self.trinomial and weight > 1e-6:
+        if (self.trinomial or self._has_dividend()) and weight > 1e-6:
             st.warning("Le dividende est grand devant le prix de l'action sur une partie de l'arbre :"
                        " des probabilités de transition sont négatives sur des noeuds atteints avec"
                        f" une probabilité totale de {weight:.2%}. Le prix est moins fiable.")
@@ -281,17 +297,26 @@ class PricerApp(object):
     # grecques de l'arbre, avec Black-Scholes en dessous quand c'est comparable
     def _show_greeks(self):
         st.markdown("#### Sensibilités & Couverture (Grecques)")
-        values: tuple = PricerApp._greeks(self.params)
+        values: tuple = PricerApp._greeks(self.params, self.use_bs)
         refs: tuple = PricerApp._bs_greeks(self.params)
-        labels: list = ["Delta (Δ)", "Gamma (Γ)", "Vega (ν, choc 1% vol)"]
+        labels: list = ["Delta (Δ)", "Gamma (Γ)", "Vega (ν, 1 % de vol)", "Vomma (1 % de vol)",
+                        "Vanna (1 % de vol)", "Theta (1 jour)"]
         tooltips: list = ["Ratio de couverture : variation du prix de l'option pour +1 € sur le spot.",
                           "Convexité : variation du delta pour +1 € sur le spot.",
-                          "Variation du prix de l'option pour une hausse de 1 point de volatilité."]
-        for i, col in enumerate(st.columns(3)):
+                          "Variation du prix de l'option pour une hausse de 1 point de volatilité.",
+                          "Variation du vega (1 %) pour une hausse de 1 point de volatilité.",
+                          "Variation du delta pour une hausse de 1 point de volatilité.",
+                          "Prix demain - prix aujourd'hui, même spot et même volatilité."]
+        cols: list = st.columns(3) + st.columns(3)
+        for i, col in enumerate(cols):
             ref: str = "" if refs is None else f"Réf. BS : {refs[i]:.5f}"
             col.metric(labels[i], f"{values[i]:.5f}", ref, delta_color="off", help=tooltips[i])
-        st.caption("Grecques calculées avec l'arbre trinomial. Référence Black-Scholes affichée"
-                   " seulement pour une européenne sans dividende.")
+        st.caption("Grecques calculées avec l'arbre trinomial et la même méthode du dernier pas que le prix."
+                   " Delta et gamma : choc de 1 % sur le spot avec Black-Scholes au dernier pas, trois noeuds"
+                   " de la date de pricing avec la valeur intrinsèque. Vega, vomma et vanna : choc de 1 % de"
+                   " vol. Avec la valeur intrinsèque, le vomma est très bruité : Black-Scholes sur le dernier"
+                   " pas le rend fiable. Référence Black-Scholes affichée seulement pour une européenne"
+                   " sans dividende.")
 
     # onglet arbre : l'image n'est lisible que pour un petit nombre de pas
     def _show_tree(self):
@@ -299,7 +324,7 @@ class PricerApp(object):
             st.info("**Conseil de lisibilité** : sélectionnez **N ≤ 30** dans la barre latérale"
                     " pour afficher l'arbre.")
         else:
-            st.image(PricerApp._tree_svg(self.params, self.trinomial))
+            st.image(PricerApp._tree_svg(self.params, self.trinomial, self.use_bs))
             st.caption("**Légende** : blanc = valeur nulle | du bleu au vert = valeur croissante"
                        " | bord rouge = exercice anticipé.")
 

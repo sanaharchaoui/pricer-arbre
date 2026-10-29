@@ -78,10 +78,10 @@ class TreeImage(VectorImage):
         b = int(max(min(255 * (green - ln_opt_value) / (green - blue), 255), 0))
         return '#00' + to_hexa_two_char(g) + to_hexa_two_char(b)
 
-    # option américaine exercée avant la maturité : la valeur est le payoff
+    # exercice anticipé : celui du pricing (exercer vaut strictement plus que garder),
+    # sans la maturité ni les noeuds prunés
     def _is_exercised(self, n: Node) -> bool:
-        payoff: float = self.opt.pay_off(n.under_price)
-        return self.opt.is_american() and n.next_up is not None and payoff > 0 and n.option_price == payoff
+        return n.next_up is not None and n.is_exercised()
 
     # les deux nombres d'un noeud ont besoin d'environ 35 pixels entre deux voisins
     def _labels_fit(self) -> bool:

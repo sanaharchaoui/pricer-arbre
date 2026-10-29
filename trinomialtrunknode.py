@@ -29,9 +29,11 @@ class TrinomialTrunkNode(TrinomialNode):
 
     # le dividende tombe-t-il dans ce pas ?
     # True si date de la colonne < date ex-div <= date suivante
+    # (et le dividende tombe après la date de pricing et au plus tard à la maturité)
     def is_div_in_period(self) -> bool:
         ex_date: datetime.datetime = self.tree.mkt.div_ex_date
-        return self.tree.mkt.div_amount > 0 and not self.are_same_dates(self.column_date, ex_date) \
+        return self.tree.mkt.has_dividend(self.tree.price_date, self.tree.mat_date) \
+            and not self.are_same_dates(self.column_date, ex_date) \
             and self.column_date < ex_date \
             and (ex_date < self.next_date() or self.are_same_dates(ex_date, self.next_date()))
 

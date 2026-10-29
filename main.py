@@ -21,21 +21,21 @@ def save(fig: Figure, file_name: str):
 
 # =============== PARAMÈTRES DU MARCHÉ ===============
 # Spot, Volatilité, Taux d'intérêt, Montant du dividende, Date ex-div
-div_ex_date = datetime.datetime(2027, 4, 21)
-mkt = Market(100.0, 0.30, 0.03, 0.0, div_ex_date)
-mkt_div = Market(100.0, 0.30, 0.03, 4.0, div_ex_date)
+div_ex_date = datetime.datetime(2027, 2, 2)
+mkt = Market(100.0, 0.20, 0.03, 0.0, div_ex_date)
+mkt_div = Market(100.0, 0.20, 0.03, 3.0, div_ex_date)
 
 
 # =============== PARAMÈTRES DU MODÈLE ===============
 # Date de pricing et nombre de pas (seuil de pruning, 0 = pas de pruning)
-mdl = Model(datetime.datetime(2026, 9, 1), 300)
+mdl = Model(datetime.datetime(2026, 9, 15), 10)
 prune_proba = 1e-7
 
 
 # =============== PARAMÈTRES DE L'OPTION ===============
 # maturité, call / put, européenne / américaine, strike
-maturity = datetime.datetime(2027, 6, 28)
-opt = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.AMER_LABEL, 100.0)
+maturity = datetime.datetime(2027, 9, 2)
+opt = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.EURO_LABEL, 101.0)
 
 
 #  =============== CONSTRUCTION DES ARBRES BINOMIAL ET TRINOMIAL ===============
@@ -59,9 +59,15 @@ call_f = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.EURO_LABEL, f
 put_f = OptionTrade(maturity, OptionTrade.PUT_LABEL, OptionTrade.EURO_LABEL, fwd)
 print("K = forward, call - put :", tree.price_option(call_f) - tree.price_option(put_f))
 
+# l'arbre binomial refuse un dividende : il faut l'arbre trinomial (Study passe au trinomial tout seul)
+try:
+    Tree(mkt_div, mdl, maturity)
+except ValueError as error:
+    print("binomial avec dividende :", error)
+
 # 2. arbre trinomial avec dividende, call américain : exercice juste avant la date ex-div
 print("============= Arbre trinomial avec dividende, call américain =============")
-amer_call = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.AMER_LABEL, 100.0)
+amer_call = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.AMER_LABEL, 101.0)
 tri_tree = TrinomialTree(mkt_div, mdl, maturity)
 tri_tree.build_tree()
 print(amer_call, "avec un arbre trinomial et un dividende :", tri_tree.price_option(amer_call))
@@ -70,7 +76,7 @@ TreeImage(1280, 800, tri_tree, amer_call).save('04_arbre_trinomial_dividende.svg
 # monitoring du même arbre avec un call européen : somme des probas = 1, S moyen = tronc,
 # valeur moyenne actualisée de l'option = prix de la racine à chaque date
 print("============= Monitoring de l'arbre trinomial, call européen =============")
-print("prix :", tri_tree.price_option(opt))
+print("prix :", tri_tree.price_option(opt), " noeuds avec une proba négative :", tri_tree.negative_nodes)
 tri_tree.print_monitoring(1)
 
 
@@ -80,15 +86,28 @@ tri_tree.print_monitoring(1)
 study = Study(mkt_div, mdl, opt)
 
 # convergence des arbres binomial et trinomial vers Black-Scholes, résultats aussi dans des csv
-print("============= Convergence vers Black-Scholes (graphes 1 et 7) =============")
-study.convergence("binomial", 300, False)
-study.convergence("trinomial", 300, True)
-study.convergence("trinomial avec pruning", 300, True, prune_proba)
+# N = 1 à 100, puis tous les 50 pas jusqu'à 1000 avec N et N + 1 (pair et impair)
+print("============= Convergence vers Black-Scholes (graphes 1, 7 et 14) =============")
+conv_steps = list(range(1, 101)) + [n + i for n in range(150, 1001, 50) for i in (0, 1)]
+study.convergence("binomial", conv_steps, False)
+study.convergence("trinomial", conv_steps, True)
+study.convergence("trinomial avec pruning", conv_steps, True, prune_proba)
 study.save_csv("binomial", 'convergence_binomial.csv')
 study.save_csv("trinomial", 'convergence_trinomial.csv')
 study.save_csv("trinomial avec pruning", 'convergence_trinomial_pruning.csv')
 save(study.convergence_gap_graph(), '01_convergence_ecart.png')
 save(study.convergence_price_graph(), '07_convergence_prix.png')
+
+# vitesse de convergence (tunnel de |écart| x N) et temps de calcul (exposant estimé à partir de 100 pas)
+print("============= Vitesse de convergence et temps de calcul (graphe 14) =============")
+study.print_exponents("binomial", 100, False)
+study.print_exponents("trinomial", 100, True)
+study.print_exponents("trinomial avec pruning", 100, True)
+save(study.run_time_graph(["binomial", "trinomial", "trinomial avec pruning"], 100), '14_temps_calcul.png')
+
+# nombre de pas choisi à partir d'une précision voulue sur le prix (formule de l'erreur)
+print("============= Nombre de pas pour une précision donnée =============")
+study.print_precision([0.05, 0.01, 0.005])
 
 # écart avec Black-Scholes selon le strike : en arches, avec un minimum sur chaque noeud de la maturité
 print("============= Écart avec Black-Scholes en fonction du strike, 10 pas (graphe 2) =============")
@@ -134,16 +153,29 @@ study.print_dividend_approximation(500, 4.0, maturity - datetime.timedelta(days=
 
 # même option avec le binomial, le trinomial et le trinomial avec l'espace du binomial
 print("============= Arbres sans dividende, 100 pas =============")
-study.print_tree_comparison(mdl.steps)
+study.print_tree_comparison(100)
 
-# delta, gamma et vega de l'arbre comparés à Black-Scholes, puis le delta selon le nombre de pas
+# grecques de l'arbre comparées à Black-Scholes (option de l'étude et call OTM), puis le delta selon N
 print("============= Grecques de l'arbre trinomial (graphe 12) =============")
-study.print_greeks(mdl.steps)
+study.print_greeks(100, 120.0)
 save(study.delta_graph(list(range(10, 301, 10))), '12_delta.png')
 
 # frontière d'exercice du put américain : sans exercice avant la date ex-dividende
 print("============= Frontière d'exercice du put américain, 500 pas (graphe 13) =============")
 save(study.exercise_boundary_graph(500, prune_proba), '13_frontiere_exercice.png')
+
+# 10 088 pas avec pruning, comparé à l'Excel du prof (call européen K = 103, 300 jours, sans dividende)
+print("============= 10 088 pas avec pruning, comparé à l'Excel du prof =============")
+prof_date = datetime.datetime(2026, 3, 3)
+prof_call = OptionTrade(prof_date + datetime.timedelta(days=300), OptionTrade.CALL_LABEL, OptionTrade.EURO_LABEL,
+                        103.0)
+big_tree = TrinomialTree(Market(100.0, 0.20, 0.03, 0.0, prof_date), Model(prof_date, 10088, prune_proba),
+                         prof_call.mat_date)
+big_tree.build_tree()
+print("valeur intrinsèque  :", big_tree.price_option(prof_call), " Excel du prof : 6.9985032")
+print("Black-Scholes en N-1 :", big_tree.price_option(prof_call, True), " Excel du prof : 6.998418767")
+print("noeuds :", big_tree.count_nodes())
+big_tree = None
 
 # monitoring avec pruning et dividende, 1000 pas : la somme des probas reste 1 à chaque date
 print("============= Monitoring avec pruning et dividende, 1000 pas =============")

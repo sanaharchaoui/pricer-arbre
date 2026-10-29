@@ -55,15 +55,6 @@ class TrinomialNode(Node):
             self.next_up.proba = self.next_up.proba + self.proba * self.p_up
             self.next_down.proba = self.next_down.proba + self.proba * self.p_down
 
-    # l'option est exercée sur ce noeud : à maturité si le payoff est positif,
-    # avant la maturité seulement pour une américaine, quand exercer vaut strictement plus que garder
-    # (un noeud pruné n'a qu'un noeud suivant, sa valeur "garder" est approchée : on ne le compte pas)
-    def is_exercised(self, opt: OptionTrade) -> bool:
-        payoff: float = opt.pay_off(self.under_price)
-        if self.next_mid is None:
-            return payoff > 0
-        return opt.is_american() and self.next_up is not None and payoff > self.hold_value() + 1e-10
-
     # valeur si on garde l'option : moyenne actualisée des noeuds suivants (seulement next_mid si pruné)
     def hold_value(self) -> float:
         value: float = self.p_mid * self.next_mid.option_price
@@ -71,12 +62,15 @@ class TrinomialNode(Node):
             value = value + self.p_up * self.next_up.option_price + self.p_down * self.next_down.option_price
         return self.tree.df * value
 
-    # dernière date : payoff, sinon valeur si on garde (et le max avec le payoff pour une américaine)
+    # dernière date : payoff, sinon valeur si on garde (ou le payoff si on exerce une américaine)
+    # un noeud pruné n'a qu'un noeud suivant, sa valeur "garder" est approchée :
+    # on garde le max avec le payoff, mais on ne le compte pas comme exercé
     def calc_option_price(self, opt: OptionTrade):
         if self.next_mid is None:
-            self.option_price = opt.pay_off(self.under_price)
-        else:
-            value: float = self.hold_value()
+            self.set_value(opt, opt.pay_off(self.under_price), True)
+        elif self.next_up is None:
+            self.set_value(opt, self.hold_value(), False)
             if opt.is_american():
-                value = max(value, opt.pay_off(self.under_price))
-            self.option_price = value
+                self.option_price = max(self.option_price, opt.pay_off(self.under_price))
+        else:
+            self.set_value(opt, self.hold_value(), opt.is_american())

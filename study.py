@@ -63,9 +63,10 @@ class Study(object):
                            o.exercice if ex is None else ex, o.strike if strike is None else strike)
 
     # arbre binomial ou trinomial à n pas, déjà construit
+    # le binomial ne gère pas le dividende : s'il y en a un, on passe au trinomial
     def tree(self, n: int, trinomial: bool, mkt: Market, prune: float = 0.0) -> Tree:
         mdl: Model = Model(self.mdl.price_date, n, prune)
-        if trinomial:
+        if trinomial or mkt.has_dividend(self.mdl.price_date, self.opt.mat_date):
             tree: Tree = TrinomialTree(mkt, mdl, self.opt.mat_date)
         else:
             tree = Tree(mkt, mdl, self.opt.mat_date)
@@ -91,13 +92,13 @@ class Study(object):
         fig.tight_layout()
         return fig
 
-    # ==================== convergence et pruning (graphes 1, 5 et 7) ====================
+    # ==================== convergence et pruning (graphes 1, 5, 7 et 14) ====================
 
-    # prix, écart x pas et temps de calcul pour n = 1 ... n_max, gardés pour les graphes
-    def convergence(self, name: str, n_max: int, trinomial: bool, prune: float = 0.0):
+    # prix, écart x pas et temps de calcul pour chaque nombre de pas de n_list, gardés pour les graphes
+    def convergence(self, name: str, n_list: list, trinomial: bool, prune: float = 0.0):
         bs: float = self.bs_price(self.opt)
         res: dict = {"pas": [], "prix": [], "ecart x pas": [], "temps": []}
-        for n in range(1, n_max + 1):
+        for n in n_list:
             gc.collect()  # on libère les vieux arbres, sinon ça compte dans le temps
             t0: float = time.perf_counter()
             price: float = self.tree(n, trinomial, self.mkt0, prune).price_option(self.opt)
@@ -106,7 +107,7 @@ class Study(object):
             res["prix"].append(price)
             res["ecart x pas"].append((price - bs) * n)
         self.conv[name] = res
-        print("  ", name, ": prix à", n_max, "pas", price, " Black-Scholes", bs)
+        print("  ", name, ": prix à", n_list[-1], "pas", price, " Black-Scholes", bs)
 
     # résultats d'une convergence dans un fichier csv
     def save_csv(self, name: str, file_name: str):
@@ -131,6 +132,68 @@ class Study(object):
         steps: list = self.conv["binomial"]["pas"]
         curves["Black-Scholes"] = (steps, [self.bs_price(self.opt)] * len(steps))
         return self.figure("Prix de l'option en fonction du nombre de pas", "Nombre de pas", curves)
+
+    # pente de la droite des moindres carrés de log(y) en fonction de log(x)
+    @staticmethod
+    def log_slope(x: list, y: list) -> float:
+        lx: list = [math.log(v) for v in x]
+        ly: list = [math.log(v) for v in y]
+        mx: float = sum(lx) / len(lx)
+        my: float = sum(ly) / len(ly)
+        cov: float = sum((lx[i] - mx) * (ly[i] - my) for i in range(len(lx)))
+        return cov / sum((v - mx) ** 2 for v in lx)
+
+    # vitesse de convergence et temps de calcul (console) :
+    # si l'écart est en 1/N, le plus grand |écart| x N ne grandit pas avec N (tunnel) ;
+    # on le compare de 10 à n_split pas, puis au-delà, et à la formule de l'erreur
+    # le temps est en N^b, b estimé à partir de n_split pas
+    def print_exponents(self, name: str, n_split: int, trinomial: bool):
+        res: dict = self.conv[name]
+        before: list = [abs(res["ecart x pas"][i]) for i in range(len(res["pas"])) if 10 <= res["pas"][i] <= n_split]
+        keep: list = [i for i in range(len(res["pas"])) if res["pas"][i] >= n_split]
+        after: list = [abs(res["ecart x pas"][i]) for i in keep]
+        times: list = [res["temps"][i] for i in keep]
+        steps: list = [res["pas"][i] for i in keep]
+        print("  ", name, ": max |écart| x N de 10 à", n_split, "pas", round(max(before), 4),
+              " au-delà", round(max(after), 4), " formule", round(self.gap_x_steps(trinomial), 4),
+              " temps en N^" + str(round(Study.log_slope(steps, times), 2)))
+
+    # graphe 14 : temps de calcul en fonction du nombre de pas, échelles log, avec l'exposant estimé
+    def run_time_graph(self, names: list, n_min: int) -> Figure:
+        curves: dict = {}
+        for name in names:
+            res: dict = self.conv[name]
+            keep: list = [i for i in range(len(res["pas"])) if res["pas"][i] >= n_min]
+            steps: list = [res["pas"][i] for i in keep]
+            times: list = [res["temps"][i] for i in keep]
+            curves[name + " (N^" + str(round(Study.log_slope(steps, times), 2)) + ")"] = (steps, times)
+        return self.figure("Temps de calcul en secondes (construction + pricing)", "Nombre de pas",
+                           curves, True, True)
+
+    # formule de l'erreur (option ATM forward), écart x nombre de pas :
+    # trinomial : 3 S0 exp(rT) sigma² T / (8 racine(2 pi) racine(exp(sigma² T) - 1))
+    # binomial : même formule avec 1/2 à la place de 3/8 (l'espace entre les noeuds est plus grand)
+    def gap_x_steps(self, trinomial: bool) -> float:
+        m: Market = self.mkt0
+        t: float = (self.opt.mat_date - self.mdl.price_date).total_seconds() / 86400 / 365
+        factor: float = 3 / 8 if trinomial else 1 / 2
+        return factor * m.spot_price * math.exp(m.int_rate * t) * m.volatility ** 2 * t \
+            / (math.sqrt(2 * math.pi) * math.sqrt(math.exp(m.volatility ** 2 * t) - 1))
+
+    # nombre de pas pour une précision gap sur le prix, avec la formule de l'erreur
+    # la formule est prudente : l'écart réel est plus petit que gap (voir print_precision)
+    def steps_for_precision(self, gap: float, trinomial: bool) -> int:
+        return math.ceil(self.gap_x_steps(trinomial) / gap)
+
+    # pour chaque précision voulue : nombre de pas, puis écart réel avec Black-Scholes (console)
+    def print_precision(self, gaps: list):
+        bs: float = self.bs_price(self.opt)
+        for gap in gaps:
+            for trinomial in (False, True):
+                n: int = self.steps_for_precision(gap, trinomial)
+                price: float = self.tree(n, trinomial, self.mkt0).price_option(self.opt)
+                print("   précision", gap, ":", "trinomial" if trinomial else "binomial", n, "pas,"
+                      " écart réel", round(abs(price - bs), 6))
 
     # graphe 5 : temps de calcul du trinomial avec dividende, sans et avec pruning, échelles log
     def pruning_graph(self, n_list: list, prune: float) -> Figure:
@@ -331,29 +394,55 @@ class Study(object):
         print("   trinomial, espace binomial  :", tri_bin.price_option(self.opt))
         print("   Black-Scholes               :", self.bs_price(self.opt))
 
-    # graphe 12 : delta de l'arbre trinomial en fonction du nombre de pas, comparé à Black-Scholes
+    # graphe 12 : delta de l'arbre trinomial en fonction du nombre de pas, avec les deux méthodes,
+    # comparé à Black-Scholes
     def delta_graph(self, n_list: list) -> Figure:
-        deltas: list = [Greeks(self.mkt0, Model(self.mdl.price_date, n), self.opt).delta() for n in n_list]
+        nodes: list = []
+        shift: list = []
+        for n in n_list:
+            g: Greeks = Greeks(self.mkt0, Model(self.mdl.price_date, n), self.opt)
+            nodes.append(g.delta())
+            shift.append(g.delta_shift())
         bs: float = BlackScholes(self.mkt0, self.mdl.price_date, self.opt).delta()
         return self.figure("Delta en fonction du nombre de pas", "Nombre de pas",
-                           {"arbre trinomial": (n_list, deltas),
+                           {"arbre, noeuds autour de la racine": (n_list, nodes),
+                            "arbre, choc de 1 % sur le spot": (n_list, shift),
                             "Black-Scholes": (n_list, [bs] * len(n_list))})
 
-    # delta, gamma et vega de l'arbre trinomial à n pas (console) :
-    # sans dividende comparés à Black-Scholes, puis avec le dividende du marché
+    # grecques de l'arbre trinomial à n pas (console), pour l'option de l'étude et une option OTM :
+    # sans dividende comparées à Black-Scholes, puis avec le dividende du marché
     # (avec un dividende discret, Black-Scholes ne donne pas de référence)
-    def print_greeks(self, n: int):
-        bs: BlackScholes = BlackScholes(self.mkt0, self.mdl.price_date, self.opt)
-        self.print_tree_greeks("arbre sans dividende", self.mkt0, n)
-        print("   Black-Scholes sans dividende : delta", round(bs.delta(), 6), " gamma", round(bs.gamma(), 6),
-              " vega (1 %)", round(bs.vega() * 0.01, 6))
-        self.print_tree_greeks("arbre avec dividende", self.mkt, n)
+    # vega, vanna et vomma pour 1 % de vol, theta pour 1 jour
+    def print_greeks(self, n: int, otm_strike: float):
+        for opt in (self.opt, self.option(strike=otm_strike)):
+            print("  ", opt)
+            self.print_tree_greeks("arbre sans dividende", self.mkt0, n, opt)
+            self.print_bs_greeks(opt)
+            self.print_tree_greeks("arbre avec dividende", self.mkt, n, opt)
 
     # une ligne de grecques de l'arbre trinomial à n pas sur le marché mkt
-    def print_tree_greeks(self, label: str, mkt: Market, n: int):
-        g: Greeks = Greeks(mkt, Model(self.mdl.price_date, n), self.opt)
-        print("  ", label, n, "pas : delta", round(g.delta(), 6), " gamma", round(g.gamma(), 6),
-              " vega (1 %)", round(g.vega() * 0.01, 6))
+    def print_tree_greeks(self, label: str, mkt: Market, n: int, opt: OptionTrade):
+        g: Greeks = Greeks(mkt, Model(self.mdl.price_date, n), opt)
+        Study.print_greeks_line(label + " " + str(n) + " pas", g.delta(), g.gamma(), g.vega(), g.vomma(),
+                                g.vanna(), g.theta())
+        print("      ", label, "choc de 1 % sur le spot : delta", round(g.delta_shift(), 6),
+              " gamma", round(g.gamma_shift(), 6))
+
+    # une ligne de grecques Black-Scholes, marché sans dividende (theta : prix demain - prix aujourd'hui)
+    def print_bs_greeks(self, opt: OptionTrade):
+        bs: BlackScholes = BlackScholes(self.mkt0, self.mdl.price_date, opt)
+        tomorrow: datetime.datetime = self.mdl.price_date + datetime.timedelta(days=1)
+        theta: float = BlackScholes(self.mkt0, tomorrow, opt).price() - bs.price()
+        Study.print_greeks_line("Black-Scholes sans dividende", bs.delta(), bs.gamma(), bs.vega(), bs.vomma(),
+                                bs.vanna(), theta)
+
+    # affiche les six grecques ; vega, vomma et vanna sont données pour 1 unité de vol
+    @staticmethod
+    def print_greeks_line(label: str, delta: float, gamma: float, vega: float, vomma: float,
+                          vanna: float, theta: float):
+        print("     ", label, ": delta", round(delta, 6), " gamma", round(gamma, 6),
+              " vega", round(vega * 0.01, 6), " vomma", round(vomma * 0.0001, 6),
+              " vanna", round(vanna * 0.01, 6), " theta", round(theta, 6))
 
     # ==================== frontière d'exercice (graphe 13) ====================
 
@@ -393,7 +482,7 @@ class Study(object):
         n: Node = trunk
         while n.unode is not None:
             n = n.unode
-        while n is not None and not n.is_exercised(opt):
+        while n is not None and not n.is_exercised():
             n = n.dnode
         if n is None:
             return None

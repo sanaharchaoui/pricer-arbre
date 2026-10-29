@@ -13,7 +13,7 @@ class BlackScholes(object):
         self.price_date: datetime.datetime = pricing_date
         self.opt: OptionTrade = opt
         # temps jusqu'à la maturité, en années
-        self.mat_time: float = (opt.mat_date - pricing_date).days / 365
+        self.mat_time: float = (opt.mat_date - pricing_date).total_seconds() / 86400 / 365
         # B-S marche seulement pour une option européenne sans dividende
         self.definition_ok = opt.is_european() and (mkt.div_amount == 0.0) \
                              and (0.0 < opt.strike) and (0.0 < mkt.volatility) and (0.0 < self.mat_time)
@@ -57,3 +57,11 @@ class BlackScholes(object):
 
     def vega(self) -> float:
         return self.mkt.spot_price * self.norm_pdf(self.d1()) * math.sqrt(self.mat_time)
+
+    # vomma : dérivée du vega par rapport à la vol (pour 1 unité de vol)
+    def vomma(self) -> float:
+        return self.vega() * self.d1() * self.d2() / self.mkt.volatility
+
+    # vanna : dérivée du delta par rapport à la vol (pour 1 unité de vol)
+    def vanna(self) -> float:
+        return -self.norm_pdf(self.d1()) * self.d2() / self.mkt.volatility
