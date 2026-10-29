@@ -247,12 +247,12 @@ class PricerApp(object):
                                         opt.strike)
         return PricerApp.STUDIES[name](Study(mkt, mdl, call))
 
-    # frontière d'exercice du put américain, sans et avec dividende
+    # frontière d'exercice de l'option choisie, sans et avec dividende (None s'il n'y a aucun exercice anticipé)
     @staticmethod
     @st.cache_resource
     def _boundary_figure(p: tuple) -> Figure:
         mkt, mdl, opt = PricerApp._objects(p)
-        return Study(mkt, mdl, opt).exercise_boundary_graph(mdl.steps, PricerApp.PRUNE)
+        return Study(mkt, mdl, opt).exercise_boundary_graph(mdl.steps, PricerApp.PRUNE, opt)
 
     # ==================== affichage ====================
 
@@ -330,8 +330,23 @@ class PricerApp(object):
 
     # onglet frontière d'exercice : comment lire le graphe
     def _show_boundary(self):
-        st.pyplot(PricerApp._boundary_figure(self.params))
-        st.caption("Au-dessus de la courbe on garde le put américain, en dessous on l'exerce.")
+        call_put, ex = self.params[8], self.params[9]
+        if ex == OptionTrade.EURO_LABEL:
+            st.info("Option européenne : elle ne peut être exercée qu'à maturité, il n'y a pas de frontière"
+                    " d'exercice anticipé.")
+            return
+        fig: Figure = PricerApp._boundary_figure(self.params)
+        if fig is None:
+            st.info("Aucun exercice anticipé pour cette option, sans ni avec dividende :"
+                    " la garder vaut toujours au moins autant que l'exercer.")
+        elif call_put == OptionTrade.CALL_LABEL:
+            st.pyplot(fig)
+            st.caption("En dessous de la courbe on garde le call américain, au-dessus on l'exerce."
+                       " Une courbe n'apparaît que s'il y a un exercice avant la maturité.")
+        else:
+            st.pyplot(fig)
+            st.caption("Au-dessus de la courbe on garde le put américain, en dessous on l'exerce."
+                       " Une courbe n'apparaît que s'il y a un exercice avant la maturité.")
 
     # onglet études : l'utilisateur choisit le graphe à afficher
     def _show_studies(self):

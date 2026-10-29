@@ -162,7 +162,8 @@ save(study.delta_graph(list(range(10, 301, 10))), '12_delta.png')
 
 # frontière d'exercice du put américain : sans exercice avant la date ex-dividende
 print("============= Frontière d'exercice du put américain, 500 pas (graphe 13) =============")
-save(study.exercise_boundary_graph(500, prune_proba), '13_frontiere_exercice.png')
+save(study.exercise_boundary_graph(500, prune_proba, study.option(OptionTrade.PUT_LABEL, OptionTrade.AMER_LABEL)),
+     '13_frontiere_exercice.png')
 
 # 10 088 pas avec pruning, comparé à l'Excel du prof (call européen K = 103, 300 jours, sans dividende)
 print("============= 10 088 pas avec pruning, comparé à l'Excel du prof =============")

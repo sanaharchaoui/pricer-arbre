@@ -446,44 +446,57 @@ class Study(object):
 
     # ==================== frontière d'exercice (graphe 13) ====================
 
-    # graphe 13 : frontière d'exercice du put américain, sans et avec dividende, arbre trinomial à n pas
-    # au-dessus de la courbe on garde le put, en dessous on l'exerce
-    def exercise_boundary_graph(self, n: int, prune: float) -> Figure:
+    # graphe 13 : frontière d'exercice de l'option opt, sans et avec dividende, arbre trinomial à n pas
+    # put : on exerce sous la courbe ; call : on exerce au-dessus
+    # une courbe seulement s'il y a un exercice avant la maturité, None s'il n'y en a dans aucun des deux marchés
+    def exercise_boundary_graph(self, n: int, prune: float, opt: OptionTrade) -> Figure:
         curves: dict = {}
         for mkt in (self.mkt0, self.mkt):
-            name: str = "put américain, dividende " + str(mkt.div_amount)
-            curves[name] = self.boundary(self.tree(n, True, mkt, prune), self.option(PUT, AMER))
-            first: str = "aucun" if len(curves[name][0]) == 1 else "le " + str(curves[name][0][0].date())
+            name: str = opt.opt_type + " " + opt.exercice + ", dividende " + str(mkt.div_amount)
+            dates, s_star, early = self.boundary(self.tree(n, True, mkt, prune), opt)
+            if early:
+                curves[name] = (dates, s_star)
+            first: str = "le " + str(dates[0].date()) if early else "aucun"
             print("  ", name, ": premier exercice anticipé :", first)
-        fig: Figure = self.figure("Frontière d'exercice du put américain (" + str(n) + " pas)", "Date",
-                                  curves)
+        if len(curves) == 0:
+            return None
+        fig: Figure = self.figure("Frontière d'exercice du " + opt.opt_type + " " + opt.exercice
+                                  + " (" + str(n) + " pas)", "Date", curves)
+        for line in fig.axes[0].lines:
+            line.set_marker(".")  # un point par date : une date d'exercice isolée reste visible
         fig.axes[0].axvline(self.mkt.div_ex_date, color="grey", linestyle="--", label="date ex-dividende")
-        fig.axes[0].axhline(self.opt.strike, color="black", linestyle=":", label="strike")
+        fig.axes[0].axhline(opt.strike, color="black", linestyle=":", label="strike")
         fig.axes[0].legend()
         return fig
 
-    # prix critique S* à chaque date : le prix du noeud le plus haut où l'option est exercée
-    # (les dates sans aucun exercice ne sont pas gardées)
+    # prix critique S* à chaque date, et True s'il y a au moins un exercice avant la maturité
+    # une date sans exercice coupe la courbe (valeur nan) : on ne relie pas deux dates éloignées
     def boundary(self, tree: TrinomialTree, opt: OptionTrade) -> tuple:
         tree.price_option(opt)
         dates: list = []
         s_star: list = []
+        early: bool = False
         trunk: TrinomialTrunkNode = tree.root
         while trunk is not None:
-            price: float = self.highest_exercised(trunk, opt)
+            price: float = self.limit_exercised(trunk, opt)
+            if price is not None:
+                early = early or trunk.next_mid is not None
+            elif len(s_star) > 0 and not math.isnan(s_star[-1]):
+                price = math.nan
             if price is not None:
                 dates.append(trunk.column_date)
                 s_star.append(price)
             trunk = trunk.next_mid
-        return dates, s_star
+        return dates, s_star, early
 
-    # on part du haut de la colonne et on descend jusqu'au premier noeud exercé (None si aucun)
-    def highest_exercised(self, trunk: TrinomialTrunkNode, opt: OptionTrade) -> float:
+    # noeud exercé le plus haut pour un put (on part du haut de la colonne et on descend),
+    # le plus bas pour un call (on part du bas et on monte) ; None si aucun noeud n'est exercé
+    def limit_exercised(self, trunk: TrinomialTrunkNode, opt: OptionTrade) -> float:
         n: Node = trunk
-        while n.unode is not None:
-            n = n.unode
+        while (n.dnode if opt.is_a_call() else n.unode) is not None:
+            n = n.dnode if opt.is_a_call() else n.unode
         while n is not None and not n.is_exercised():
-            n = n.dnode
+            n = n.unode if opt.is_a_call() else n.dnode
         if n is None:
             return None
         return n.under_price
