@@ -36,7 +36,7 @@ if mat_date <= pricing_date:
     st.stop()
 
 st.sidebar.header("Option")
-strike = st.sidebar.number_input("Strike", value=101.0, min_value=0.0, step=1.0)
+strike = st.sidebar.number_input("Strike", value=101.0, min_value=1.0, step=1.0)
 call_put = st.sidebar.selectbox("Type", [OptionTrade.CALL_LABEL, OptionTrade.PUT_LABEL])
 exercise = st.sidebar.selectbox("Exercice", [OptionTrade.EURO_LABEL, OptionTrade.AMER_LABEL])
 
@@ -67,12 +67,14 @@ if (trinomial or has_div) and tree.negative_proba_weight() > 1e-6:
                " le prix n'est pas fiable.")
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Prix de l'arbre", round(price, 4))
-col2.metric("Prix sans dividende", round(price0, 4))
+col1.metric("Prix de l'arbre", format(price, ".6f"))
+col2.metric("Prix sans dividende", format(price0, ".6f"))
 if opt.is_european():
-    col3.metric("Black-Scholes sans dividende", round(study.bs_price(opt), 4))
+    bs_price = study.bs_price(opt)
+    col3.metric("Black-Scholes sans dividende", format(bs_price, ".6f"),
+                "écart arbre sans dividende : " + format(price0 - bs_price, ".6f"), delta_color="off")
 else:
-    col3.metric("Black-Scholes", "pas de formule (américaine)")
+    col3.metric("Black-Scholes", "pas de formule")
 
 # =============== GRECQUES ===============
 st.header("Grecques (arbre trinomial)")
@@ -97,12 +99,15 @@ if opt.is_european() and not has_div:
     theta_bs = BlackScholes(mkt, tomorrow, opt).price() - bs.price()
     refs = [bs.delta(), bs.gamma(), bs.vega() * 0.01, bs.vomma() * 0.0001, bs.vanna() * 0.01, theta_bs]
 
-cols = st.columns(6)
-for i in range(6):
-    if refs is None:
-        cols[i].metric(names[i], round(values[i], 5))
-    else:
-        cols[i].metric(names[i], round(values[i], 5), "BS : " + str(round(refs[i], 5)), delta_color="off")
+# tableau : une ligne par grecque, avec tous les chiffres (6 décimales)
+table = {"Grecque": names, "Arbre": []}
+for v in values:
+    table["Arbre"].append(format(v, ".6f"))
+if refs is not None:
+    table["Black-Scholes"] = []
+    for v in refs:
+        table["Black-Scholes"].append(format(v, ".6f"))
+st.table(table)
 st.caption("Vega, vomma et vanna pour 1 % de vol ; theta : prix demain - prix aujourd'hui"
            " (spot moins le dividende si la date ex-dividende est demain).")
 
@@ -122,3 +127,49 @@ if opt.is_american():
         st.write("Aucun exercice anticipé : garder l'option vaut toujours au moins autant que l'exercer.")
     else:
         st.pyplot(fig)
+
+# =============== ÉTUDES ===============
+# les mêmes graphes que main.py, avec moins de pas pour aller vite
+# calculés seulement quand on clique sur le bouton (sinon tout serait recalculé à chaque changement)
+st.header("Études")
+st.caption("Faites avec un call européen de même strike et même maturité, sur le marché choisi.")
+studies = ["1 - Écart x nombre de pas",
+           "2 - Écart selon le strike (10 pas)",
+           "3 - Américaine - européenne selon le taux",
+           "5 - Temps de calcul avec et sans pruning",
+           "6 - Dernier pas : écart x nombre de pas",
+           "7 - Prix selon le nombre de pas",
+           "8 - Probabilité d'être dans la zone d'exercice",
+           "11 - Dernier pas : écart selon le strike",
+           "12 - Delta selon le nombre de pas",
+           "14 - Temps de calcul selon le nombre de pas"]
+choice = st.selectbox("Graphe", studies)
+if st.button("Afficher le graphe"):
+    call = OptionTrade(opt.mat_date, OptionTrade.CALL_LABEL, OptionTrade.EURO_LABEL, strike)
+    s = Study(mkt, mdl, call)
+    with st.spinner("Calcul en cours..."):
+        if choice in (studies[0], studies[5], studies[9]):
+            # convergence binomiale et trinomiale de 1 à 100 pas
+            s.convergence("binomial", list(range(1, 101)), False)
+            s.convergence("trinomial", list(range(1, 101)), True)
+        if choice == studies[0]:
+            fig = s.convergence_gap_graph()
+        elif choice == studies[1]:
+            fig = s.strike_gap_graph(10, 0.8 * strike, 1.2 * strike, 0.1)
+        elif choice == studies[2]:
+            fig = s.rate_graph(100, -0.05, 0.05, 0.01)
+        elif choice == studies[3]:
+            fig = s.pruning_graph([10, 20, 50, 100, 200, 300, 500], 1e-7)
+        elif choice == studies[4]:
+            fig = s.last_step_graph([1, 2, 3, 5, 10, 20, 50, 100, 200, 300])
+        elif choice == studies[5]:
+            fig = s.convergence_price_graph()
+        elif choice == studies[6]:
+            fig = s.exercise_graph(20)
+        elif choice == studies[7]:
+            fig = s.last_step_strike_graph(10, 0.7 * strike, 1.3 * strike, 0.25)
+        elif choice == studies[8]:
+            fig = s.delta_graph(list(range(10, 201, 10)))
+        else:
+            fig = s.run_time_graph(["binomial", "trinomial"], 50)
+    st.pyplot(fig)

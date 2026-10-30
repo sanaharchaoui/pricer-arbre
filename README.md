@@ -28,8 +28,9 @@ L'application interactive :
 - `treeimage.py`, `vectorimage.py` : images SVG des arbres
 - `main.py` : point d'entrée, lance toutes les études demandées, puis une section « Compléments »
   (vus en cours, hors énoncé) : dernier pas en N-1 (graphes 6 et 11) et zone d'exercice (graphe 8)
-- `app.py` : application Streamlit simple : prix, grecques, image de l'arbre (30 pas ou moins)
-  et frontière d'exercice d'une américaine ; les études et les graphes sont dans `main.py`
+- `app.py` : application Streamlit : prix, tableau des grecques, image de l'arbre (30 pas ou moins),
+  frontière d'exercice d'une américaine, et les graphes d'études (moins de pas que `main.py`,
+  calculés quand on clique sur le bouton)
 
 ## Choix de modélisation
 
