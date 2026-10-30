@@ -79,9 +79,10 @@ class TreeImage(VectorImage):
         return '#00' + to_hexa_two_char(g) + to_hexa_two_char(b)
 
     # exercice anticipé : celui du pricing (exercer vaut strictement plus que garder),
-    # sans la maturité ni les noeuds prunés
+    # sans la maturité (noeud sans noeud suivant)
     def _is_exercised(self, n: Node) -> bool:
-        return n.next_up is not None and n.is_exercised()
+        not_last_date: bool = n.next_up is not None or n.next_mid is not None
+        return not_last_date and n.is_exercised()
 
     # les deux nombres d'un noeud ont besoin d'environ 35 pixels entre deux voisins
     def _labels_fit(self) -> bool:

@@ -38,6 +38,7 @@ L'application interactive :
   et créer directement un `Tree` binomial avec un dividende lève une erreur.
 - Pruning : un noeud atteint avec une proba plus petite que le seuil va seulement vers le noeud
   le plus proche de son espérance (créé s'il n'existe pas), avec une proba de 1.
+  Une américaine peut y être exercée comme sur les autres noeuds (compté dans la frontière d'exercice).
 - Delta et gamma de deux façons : avec les trois noeuds de la date de pricing (l'arbre commence
   un pas avant), ou avec `OneDimDerivative` et un choc de 1 % sur le spot. L'application prend le choc de spot
   avec Black-Scholes au dernier pas, et les trois noeuds avec la valeur intrinsèque (le choc de spot

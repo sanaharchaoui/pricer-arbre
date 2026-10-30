@@ -115,11 +115,16 @@ class Study(object):
         with open(file_name, "w") as f:
             f.write(",".join(res) + "\n")
             for i in range(len(res["pas"])):
-                f.write(",".join([str(res[key][i]) for key in res]) + "\n")
+                line: str = str(res["pas"][i]) + "," + str(res["prix"][i]) + "," \
+                    + str(res["ecart x pas"][i]) + "," + str(res["temps"][i])
+                f.write(line + "\n")
 
     # une courbe par convergence : "key" en fonction du nombre de pas
     def conv_curves(self, names: list, key: str) -> dict:
-        return {name: (self.conv[name]["pas"], self.conv[name][key]) for name in names}
+        curves: dict = {}
+        for name in names:
+            curves[name] = (self.conv[name]["pas"], self.conv[name][key])
+        return curves
 
     # graphe 1 : (prix - Black-Scholes) x pas, binomial et trinomial, axe des pas en log
     # avec le tunnel de la formule de l'erreur (pointillés : binomial et trinomial)
@@ -157,8 +162,13 @@ class Study(object):
         curves: dict = {}
         for name in ("binomial", "trinomial"):
             res: dict = self.conv[name]
-            keep: list = [i for i in range(len(res["pas"])) if res["pas"][i] >= 10]
-            curves[name] = ([res["pas"][i] for i in keep], [res["prix"][i] for i in keep])
+            steps: list = []
+            prices: list = []
+            for i in range(len(res["pas"])):
+                if res["pas"][i] >= 10:
+                    steps.append(res["pas"][i])
+                    prices.append(res["prix"][i])
+            curves[name] = (steps, prices)
         steps: list = curves["binomial"][0]
         curves["Black-Scholes"] = (steps, [self.bs_price(self.opt)] * len(steps))
         return self.figure("Prix de l'option en fonction du nombre de pas", "Nombre de pas", curves, True)
@@ -168,19 +178,27 @@ class Study(object):
     def time_exponent(self, steps: list, times: list) -> float:
         return math.log(times[-1] / times[0]) / math.log(steps[-1] / steps[0])
 
-    # vitesse de convergence et temps de calcul (console) :
-    # si l'écart est en 1/N, le plus grand |écart| x N ne grandit pas avec N (tunnel) ;
-    # on le compare de 10 à n_split pas, puis au-delà, et à la formule de l'erreur
-    # le temps est en N^b, b estimé à partir de n_split pas
+    # vitesse de convergence et temps de calcul (console)
+    # 1) si l'écart est en 1/N, |écart| x N ne grandit pas avec N : on compare son maximum
+    #    de 10 à n_split pas et au-delà (et à la formule de l'erreur du cours)
+    # 2) exposant b du temps de calcul (temps = c x N^b), à partir de n_split pas
     def print_exponents(self, name: str, n_split: int, trinomial: bool):
         res: dict = self.conv[name]
-        before: list = [abs(res["ecart x pas"][i]) for i in range(len(res["pas"])) if 10 <= res["pas"][i] <= n_split]
-        keep: list = [i for i in range(len(res["pas"])) if res["pas"][i] >= n_split]
-        after: list = [abs(res["ecart x pas"][i]) for i in keep]
-        times: list = [res["temps"][i] for i in keep]
-        steps: list = [res["pas"][i] for i in keep]
-        print("  ", name, ": max |écart| x N de 10 à", n_split, "pas", round(max(before), 4),
-              " au-delà", round(max(after), 4), " formule", round(self.gap_x_steps(trinomial), 4),
+        max_before: float = 0.0  # plus grand |écart| x N de 10 à n_split pas
+        max_after: float = 0.0   # plus grand |écart| x N à partir de n_split pas
+        steps: list = []         # nombres de pas à partir de n_split
+        times: list = []         # temps de calcul correspondants
+        for i in range(len(res["pas"])):
+            n: int = res["pas"][i]
+            gap: float = abs(res["ecart x pas"][i])
+            if 10 <= n <= n_split:
+                max_before = max(max_before, gap)
+            if n >= n_split:
+                max_after = max(max_after, gap)
+                steps.append(n)
+                times.append(res["temps"][i])
+        print("  ", name, ": max |écart| x N de 10 à", n_split, "pas", round(max_before, 4),
+              " au-delà", round(max_after, 4), " formule", round(self.gap_x_steps(trinomial), 4),
               " temps en N^" + str(round(self.time_exponent(steps, times), 2)))
 
     # graphe 14 : temps de calcul en fonction du nombre de pas, échelles log, avec l'exposant estimé
@@ -188,9 +206,12 @@ class Study(object):
         curves: dict = {}
         for name in names:
             res: dict = self.conv[name]
-            keep: list = [i for i in range(len(res["pas"])) if res["pas"][i] >= n_min]
-            steps: list = [res["pas"][i] for i in keep]
-            times: list = [res["temps"][i] for i in keep]
+            steps: list = []
+            times: list = []
+            for i in range(len(res["pas"])):
+                if res["pas"][i] >= n_min:
+                    steps.append(res["pas"][i])
+                    times.append(res["temps"][i])
             curves[name + " (N^" + str(round(self.time_exponent(steps, times), 2)) + ")"] = (steps, times)
         return self.figure("Temps de calcul en secondes (construction + pricing)", "Nombre de pas",
                            curves, True, True)
@@ -209,7 +230,10 @@ class Study(object):
     def pruning_graph(self, n_list: list, prune: float) -> Figure:
         curves: dict = {}
         for p in (0.0, prune):
-            curves["pruning " + str(p)] = (n_list, [self.run_time(n, p) for n in n_list])
+            times: list = []
+            for n in n_list:
+                times.append(self.run_time(n, p))
+            curves["pruning " + str(p)] = (n_list, times)
         return self.figure("Temps de calcul en secondes (construction + pricing)", "Nombre de pas",
                            curves, True, True)
 
@@ -238,8 +262,9 @@ class Study(object):
     def strike_gap_graph(self, n: int, k_min: float, k_max: float, k_jump: float) -> Figure:
         tree: Tree = self.tree(n, False, self.mkt0)
         strikes: list = values_between(k_min, k_max, k_jump)
-        gaps: list = [tree.price_option(self.option(strike=k)) - self.bs_price(self.option(strike=k))
-                      for k in strikes]
+        gaps: list = []
+        for k in strikes:
+            gaps.append(tree.price_option(self.option(strike=k)) - self.bs_price(self.option(strike=k)))
         fig: Figure = self.figure("Prix arbre - Black-Scholes en fonction du strike (" + str(n) + " pas)",
                                   "Strike", {"arbre binomial": (strikes, gaps)})
         for s in self.last_column(tree):
@@ -266,9 +291,14 @@ class Study(object):
         curves: dict = {}
         for div in (0.0, self.mkt.div_amount):
             for call_put in (CALL, PUT):
-                diffs: list = [self.amer_minus_euro(n, self.market(r, div), call_put) for r in rates]
+                diffs: list = []
+                rounded: list = []  # pour l'affichage dans la console
+                for r in rates:
+                    d: float = self.amer_minus_euro(n, self.market(r, div), call_put)
+                    diffs.append(d)
+                    rounded.append(round(d, 4))
                 curves[call_put + ", dividende " + str(div)] = (rates, diffs)
-                print("  ", call_put, "dividende", div, ":", [round(d, 4) for d in diffs])
+                print("  ", call_put, "dividende", div, ":", rounded)
         fig: Figure = self.figure("Américaine - européenne en fonction du taux", "Taux d'intérêt", curves)
         fig.axes[0].axvline(0.0, color="black", linewidth=0.5)
         return fig
@@ -360,14 +390,14 @@ class Study(object):
         fig: Figure = self.figure("Frontière d'exercice du " + opt.opt_type + " " + opt.exercice
                                   + " (" + str(n) + " pas)", "Date", curves)
         for line in fig.axes[0].lines:
-            line.set_marker(".")  # un point par date : une date d'exercice isolée reste visible
+            line.set_linestyle("none")  # un point par date, sans trait : on ne relie pas des dates éloignées
+            line.set_marker(".")
         fig.axes[0].axvline(self.mkt.div_ex_date, color="grey", linestyle="--", label="date ex-dividende")
         fig.axes[0].axhline(opt.strike, color="black", linestyle=":", label="strike")
         fig.axes[0].legend(loc="upper left")  # en haut à gauche : la légende ne cache pas la courbe
         return fig
 
-    # prix critique S* à chaque date, et True s'il y a au moins un exercice avant la maturité
-    # une date sans exercice coupe la courbe (valeur nan) : on ne relie pas deux dates éloignées
+    # prix critique S* à chaque date où l'option est exercée, et True s'il y a un exercice avant la maturité
     def boundary(self, tree: TrinomialTree, opt: OptionTrade) -> tuple:
         tree.price_option(opt)
         dates: list = []
@@ -377,23 +407,28 @@ class Study(object):
         while trunk is not None:
             price: float = self.limit_exercised(trunk, opt)
             if price is not None:
-                early = early or trunk.next_mid is not None
-            elif len(s_star) > 0 and not math.isnan(s_star[-1]):
-                price = math.nan
-            if price is not None:
                 dates.append(trunk.column_date)
                 s_star.append(price)
+                if trunk.next_mid is not None:  # pas la dernière date : exercice anticipé
+                    early = True
             trunk = trunk.next_mid
         return dates, s_star, early
 
-    # noeud exercé le plus haut pour un put (on part du haut de la colonne et on descend),
-    # le plus bas pour un call (on part du bas et on monte) ; None si aucun noeud n'est exercé
+    # prix du noeud exercé le plus proche de la zone où l'on garde l'option, None si aucun noeud n'est exercé
     def limit_exercised(self, trunk: TrinomialTrunkNode, opt: OptionTrade) -> float:
         n: Node = trunk
-        while (n.dnode if opt.is_a_call() else n.unode) is not None:
-            n = n.dnode if opt.is_a_call() else n.unode
-        while n is not None and not n.is_exercised():
-            n = n.unode if opt.is_a_call() else n.dnode
+        if opt.is_a_put():
+            # put : on exerce quand S est bas, on part du haut de la colonne et on descend
+            while n.unode is not None:
+                n = n.unode
+            while n is not None and not n.is_exercised():
+                n = n.dnode
+        else:
+            # call : on exerce quand S est haut, on part du bas de la colonne et on monte
+            while n.dnode is not None:
+                n = n.dnode
+            while n is not None and not n.is_exercised():
+                n = n.unode
         if n is None:
             return None
         return n.under_price
@@ -406,8 +441,10 @@ class Study(object):
         curves: dict = {}
         for name in Study.LAST_STEP_METHODS:
             trinomial, last_step_bs = Study.LAST_STEP_METHODS[name]
-            gaps: list = [(self.tree(n, trinomial, self.mkt0).price_option(self.opt, last_step_bs) - bs) * n
-                          for n in n_list]
+            gaps: list = []
+            for n in n_list:
+                price: float = self.tree(n, trinomial, self.mkt0).price_option(self.opt, last_step_bs)
+                gaps.append((price - bs) * n)
             curves[name] = (n_list, gaps)
             print("  ", name, ": écart x pas à", n_list[-1], "pas =", round(gaps[-1], 6))
         return self.figure("Dernier pas : (prix arbre - Black-Scholes) x nombre de pas", "Nombre de pas",
@@ -420,8 +457,11 @@ class Study(object):
         for name in Study.LAST_STEP_METHODS:
             trinomial, last_step_bs = Study.LAST_STEP_METHODS[name]
             tree: Tree = self.tree(n, trinomial, self.mkt0)
-            curves[name] = (strikes, [tree.price_option(self.option(strike=k), last_step_bs)
-                                      - self.bs_price(self.option(strike=k)) for k in strikes])
+            gaps: list = []
+            for k in strikes:
+                price: float = tree.price_option(self.option(strike=k), last_step_bs)
+                gaps.append(price - self.bs_price(self.option(strike=k)))
+            curves[name] = (strikes, gaps)
         return self.figure("Dernier pas : prix arbre - Black-Scholes (" + str(n) + " pas)", "Strike", curves)
 
     # graphe 8 : proba d'être dans la zone d'exercice, par date, options américaines, arbre trinomial à n pas

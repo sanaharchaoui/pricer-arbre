@@ -66,14 +66,9 @@ class TrinomialNode(Node):
         return self.tree.df * value
 
     # dernière date : payoff, sinon valeur si on garde (ou le payoff si on exerce une américaine)
-    # un noeud pruné n'a qu'un noeud suivant, sa valeur "garder" est approchée :
-    # on garde le max avec le payoff, mais on ne le compte pas comme exercé
+    # un noeud pruné n'a que next_mid : hold_value le gère, et l'exercice y est compté comme ailleurs
     def calc_option_price(self, opt: OptionTrade):
         if self.next_mid is None:
             self.set_value(opt, opt.pay_off(self.under_price), True)
-        elif self.next_up is None:
-            self.set_value(opt, self.hold_value(), False)
-            if opt.is_american():
-                self.option_price = max(self.option_price, opt.pay_off(self.under_price))
         else:
             self.set_value(opt, self.hold_value(), opt.is_american())

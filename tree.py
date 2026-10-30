@@ -22,10 +22,11 @@ class Tree(object):
         self.nb_steps: int = mdl.steps + self.steps_before_pricing()
         self.delta_t: float = (mat - mdl.price_date).total_seconds() / 86400 / 365 / mdl.steps
 
-        # paramètres de l'arbre binomial
+        # paramètres de l'arbre binomial (cours p. 8) : alpha_bin est le alpha du cours,
+        # noeud du haut = forward x alpha_bin, noeud du bas = forward / alpha_bin
         a: float = (1 + math.exp(mkt.volatility ** 2 * self.delta_t)) / 2
-        self.sqrt_alpha: float = a + math.sqrt(a ** 2 - 1)
-        self.p_up: float = 1 / (1 + self.sqrt_alpha)
+        self.alpha_bin: float = a + math.sqrt(a ** 2 - 1)
+        self.p_up: float = 1 / (1 + self.alpha_bin)
         self.p_down: float = 1 - self.p_up
         self.df: float = math.exp(-mkt.int_rate * self.delta_t)
         self.root: TrunkNode = self.new_root()
@@ -50,15 +51,15 @@ class Tree(object):
     # on descend la colonne depuis le noeud du haut : chaque noeud prend comme next_up
     # le next_down du noeud au-dessus, et crée son propre next_down
     def build_next_column(self, top: Node, trunk_parent: Node, trunk: TrunkNode):
-        top.next_up = Node(top.forward() * self.sqrt_alpha, self)
+        top.next_up = Node(top.forward() * self.alpha_bin, self)
         n: Node = top
         while n is not None:
             if n.unode is not None:
                 n.next_up = n.unode.next_down
             if n is trunk_parent:
-                n.next_down = TrunkNode(n.forward() / self.sqrt_alpha, self, trunk)
+                n.next_down = TrunkNode(n.forward() / self.alpha_bin, self, trunk)
             else:
-                n.next_down = Node(n.forward() / self.sqrt_alpha, self)
+                n.next_down = Node(n.forward() / self.alpha_bin, self)
             n.next_up.dnode = n.next_down
             n.next_down.unode = n.next_up
             n = n.dnode

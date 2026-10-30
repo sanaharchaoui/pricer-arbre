@@ -115,7 +115,8 @@ st.caption("Vega, vomma et vanna pour 1 % de vol ; theta : prix demain - prix au
 st.header("Arbre")
 if steps <= 30:
     st.image(TreeImage(1000, 600, tree, opt).image.as_str())
-    st.caption("Blanc : option sans valeur ; du bleu au vert : valeur croissante ; bord rouge : exercice anticipé.")
+    st.caption("Blanc : option sans valeur ; du bleu au vert : valeur croissante ;"
+               " bord rouge : exercice anticipé.")
 else:
     st.write("Choisir 30 pas ou moins pour afficher l'arbre.")
 
