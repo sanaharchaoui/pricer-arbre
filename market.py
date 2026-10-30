@@ -14,5 +14,8 @@ class Market(object):
         self.definition_ok = price > 0 and vol > 0 and div_a >= 0
 
     # True si un dividende est payé entre start (exclu) et end (inclus)
+    # convention du projet :
+    # - ex-date = date de pricing : le dividende est déjà détaché, le spot est déjà ex-dividende
+    # - ex-date = maturité : le dividende compte, le payoff est calculé sur le prix ex-dividende
     def has_dividend(self, start: datetime.datetime, end: datetime.datetime) -> bool:
         return self.div_amount > 0 and start < self.div_ex_date <= end

@@ -50,7 +50,7 @@ class Greeks(object):
         m: Market = self.mkt
         mkt: Market = Market(spot, vol, m.int_rate, m.div_amount, m.div_ex_date)
         mdl: Model = Model(price_date, self.mdl.steps, self.mdl.prune_proba)
-        tree: TrinomialTree = TrinomialTree(mkt, mdl, self.opt.mat_date, False, True)
+        tree: TrinomialTree = TrinomialTree(mkt, mdl, self.opt.mat_date, True)
         tree.build_tree()
         tree.price_option(self.opt, self.last_step_bs)
         return tree
@@ -104,4 +104,7 @@ class Greeks(object):
         spot: float = self.mkt.spot_price
         if self.mkt.has_dividend(self.mdl.price_date, tomorrow):
             spot = spot - self.mkt.div_amount
+        # si demain est la maturité, le prix de demain est le payoff (on ne peut pas construire d'arbre)
+        if tomorrow >= self.opt.mat_date:
+            return self.opt.pay_off(spot) - self.price
         return self.priced_tree(spot, self.mkt.volatility, tomorrow).price_node().option_price - self.price

@@ -129,15 +129,3 @@ class Tree(object):
                 n = n.dnode
             trunk = trunk.prec_trunk
         return count
-
-    # prix du sous-jacent et valeur de l'option de chaque noeud, date par date
-    def print_tree(self):
-        top: Node = self.root
-        for i in range(self.nb_steps + 1):
-            print("date", i)
-            n: Node = top
-            while n is not None:
-                print("   S =", round(n.under_price, 4), " option =", round(n.option_price, 4))
-                n = n.dnode
-            if i < self.nb_steps:
-                top = self.next_column_top(top)

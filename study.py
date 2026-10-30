@@ -121,27 +121,52 @@ class Study(object):
     def conv_curves(self, names: list, key: str) -> dict:
         return {name: (self.conv[name]["pas"], self.conv[name][key]) for name in names}
 
-    # graphe 1 : (prix - Black-Scholes) x pas, binomial et trinomial
+    # graphe 1 : (prix - Black-Scholes) x pas, binomial et trinomial, axe des pas en log
+    # avec le tunnel de la formule de l'erreur (pointillés : binomial et trinomial)
     def convergence_gap_graph(self) -> Figure:
-        return self.figure("(Prix arbre - Black-Scholes) x nombre de pas", "Nombre de pas",
-                           self.conv_curves(["binomial", "trinomial"], "ecart x pas"))
+        fig: Figure = self.figure("(Prix arbre - Black-Scholes) x nombre de pas", "Nombre de pas",
+                                  self.conv_curves(["binomial", "trinomial"], "ecart x pas"), True)
+        # un point par nombre de pas : on ne relie pas des N éloignés
+        for line in fig.axes[0].lines:
+            line.set_linestyle("none")
+            line.set_marker(".")
+        # tunnel donné par la formule de l'erreur du cours
+        for trinomial in (False, True):
+            g: float = self.gap_x_steps(trinomial)
+            color: str = "tab:orange" if trinomial else "tab:blue"
+            label: str = "formule " + ("trinomial" if trinomial else "binomial")
+            fig.axes[0].axhline(g, color=color, linestyle=":", label=label)
+            fig.axes[0].axhline(-g, color=color, linestyle=":")
+        fig.axes[0].legend()  # légende refaite : points et pointillés
+        return fig
 
-    # graphe 7 : prix en fonction du nombre de pas, avec le prix Black-Scholes
+    # graphe 1b : zoom de 1000 à 1100 pas, un point par nombre de pas (comme demandé dans le cours)
+    # avec seulement un point tous les 50 pas, le graphe 1 montre une fausse oscillation
+    def convergence_zoom_graph(self) -> Figure:
+        fig: Figure = self.figure("Zoom : (prix arbre - Black-Scholes) x nombre de pas", "Nombre de pas",
+                                  self.conv_curves(["binomial zoom", "trinomial zoom"], "ecart x pas"))
+        for line in fig.axes[0].lines:
+            line.set_linestyle("none")
+            line.set_marker(".")
+        fig.axes[0].legend()  # légende refaite : des points, pas des traits
+        return fig
+
+    # graphe 7 : prix en fonction du nombre de pas (à partir de 10 pas), avec le prix Black-Scholes
+    # sans les tout petits arbres, sinon l'échelle est écrasée par N = 1
     def convergence_price_graph(self) -> Figure:
-        curves: dict = self.conv_curves(["binomial", "trinomial"], "prix")
-        steps: list = self.conv["binomial"]["pas"]
+        curves: dict = {}
+        for name in ("binomial", "trinomial"):
+            res: dict = self.conv[name]
+            keep: list = [i for i in range(len(res["pas"])) if res["pas"][i] >= 10]
+            curves[name] = ([res["pas"][i] for i in keep], [res["prix"][i] for i in keep])
+        steps: list = curves["binomial"][0]
         curves["Black-Scholes"] = (steps, [self.bs_price(self.opt)] * len(steps))
-        return self.figure("Prix de l'option en fonction du nombre de pas", "Nombre de pas", curves)
+        return self.figure("Prix de l'option en fonction du nombre de pas", "Nombre de pas", curves, True)
 
-    # pente de la droite des moindres carrés de log(y) en fonction de log(x)
-    @staticmethod
-    def log_slope(x: list, y: list) -> float:
-        lx: list = [math.log(v) for v in x]
-        ly: list = [math.log(v) for v in y]
-        mx: float = sum(lx) / len(lx)
-        my: float = sum(ly) / len(ly)
-        cov: float = sum((lx[i] - mx) * (ly[i] - my) for i in range(len(lx)))
-        return cov / sum((v - mx) ** 2 for v in lx)
+    # exposant b du temps de calcul : si temps = c x N^b, alors b = log(t2 / t1) / log(N2 / N1)
+    # on prend deux points : le premier et le dernier nombre de pas
+    def time_exponent(self, steps: list, times: list) -> float:
+        return math.log(times[-1] / times[0]) / math.log(steps[-1] / steps[0])
 
     # vitesse de convergence et temps de calcul (console) :
     # si l'écart est en 1/N, le plus grand |écart| x N ne grandit pas avec N (tunnel) ;
@@ -156,7 +181,7 @@ class Study(object):
         steps: list = [res["pas"][i] for i in keep]
         print("  ", name, ": max |écart| x N de 10 à", n_split, "pas", round(max(before), 4),
               " au-delà", round(max(after), 4), " formule", round(self.gap_x_steps(trinomial), 4),
-              " temps en N^" + str(round(Study.log_slope(steps, times), 2)))
+              " temps en N^" + str(round(self.time_exponent(steps, times), 2)))
 
     # graphe 14 : temps de calcul en fonction du nombre de pas, échelles log, avec l'exposant estimé
     def run_time_graph(self, names: list, n_min: int) -> Figure:
@@ -166,7 +191,7 @@ class Study(object):
             keep: list = [i for i in range(len(res["pas"])) if res["pas"][i] >= n_min]
             steps: list = [res["pas"][i] for i in keep]
             times: list = [res["temps"][i] for i in keep]
-            curves[name + " (N^" + str(round(Study.log_slope(steps, times), 2)) + ")"] = (steps, times)
+            curves[name + " (N^" + str(round(self.time_exponent(steps, times), 2)) + ")"] = (steps, times)
         return self.figure("Temps de calcul en secondes (construction + pricing)", "Nombre de pas",
                            curves, True, True)
 
@@ -179,21 +204,6 @@ class Study(object):
         factor: float = 3 / 8 if trinomial else 1 / 2
         return factor * m.spot_price * math.exp(m.int_rate * t) * m.volatility ** 2 * t \
             / (math.sqrt(2 * math.pi) * math.sqrt(math.exp(m.volatility ** 2 * t) - 1))
-
-    # nombre de pas pour une précision gap sur le prix, avec la formule de l'erreur
-    # la formule est prudente : l'écart réel est plus petit que gap (voir print_precision)
-    def steps_for_precision(self, gap: float, trinomial: bool) -> int:
-        return math.ceil(self.gap_x_steps(trinomial) / gap)
-
-    # pour chaque précision voulue : nombre de pas, puis écart réel avec Black-Scholes (console)
-    def print_precision(self, gaps: list):
-        bs: float = self.bs_price(self.opt)
-        for gap in gaps:
-            for trinomial in (False, True):
-                n: int = self.steps_for_precision(gap, trinomial)
-                price: float = self.tree(n, trinomial, self.mkt0).price_option(self.opt)
-                print("   précision", gap, ":", "trinomial" if trinomial else "binomial", n, "pas,"
-                      " écart réel", round(abs(price - bs), 6))
 
     # graphe 5 : temps de calcul du trinomial avec dividende, sans et avec pruning, échelles log
     def pruning_graph(self, n_list: list, prune: float) -> Figure:
@@ -221,7 +231,7 @@ class Study(object):
             print("   pruning", p, ": prix", round(price, 8), " noeuds", tree.count_nodes(),
                   " temps", round(time.perf_counter() - t0, 2), "s")
 
-    # ==================== strike (graphes 2 et 11) ====================
+    # ==================== strike (graphe 2) ====================
 
     # graphe 2 : écart avec Black-Scholes en fonction du strike, arbre binomial à n pas
     # (pointillés : noeuds de la maturité)
@@ -248,43 +258,7 @@ class Study(object):
             n = n.dnode
         return prices
 
-    # graphe 11 : dernier pas, écart avec Black-Scholes en fonction du strike, arbres à n pas
-    def last_step_strike_graph(self, n: int, k_min: float, k_max: float, k_jump: float) -> Figure:
-        strikes: list = values_between(k_min, k_max, k_jump)
-        curves: dict = {}
-        for name in Study.LAST_STEP_METHODS:
-            trinomial, last_step_bs = Study.LAST_STEP_METHODS[name]
-            tree: Tree = self.tree(n, trinomial, self.mkt0)
-            curves[name] = (strikes, [tree.price_option(self.option(strike=k), last_step_bs)
-                                      - self.bs_price(self.option(strike=k)) for k in strikes])
-        return self.figure("Dernier pas : prix arbre - Black-Scholes (" + str(n) + " pas)", "Strike", curves)
-
-    # ==================== dernier pas (graphe 6) ====================
-
-    # graphe 6 : dernier pas, (prix - Black-Scholes) x pas pour les quatre méthodes
-    def last_step_graph(self, n_list: list) -> Figure:
-        bs: float = self.bs_price(self.opt)
-        curves: dict = {}
-        for name in Study.LAST_STEP_METHODS:
-            trinomial, last_step_bs = Study.LAST_STEP_METHODS[name]
-            gaps: list = [(self.tree(n, trinomial, self.mkt0).price_option(self.opt, last_step_bs) - bs) * n
-                          for n in n_list]
-            curves[name] = (n_list, gaps)
-            print("  ", name, ": écart x pas à", n_list[-1], "pas =", round(gaps[-1], 6))
-        return self.figure("Dernier pas : (prix arbre - Black-Scholes) x nombre de pas", "Nombre de pas",
-                           curves, True)
-
-    # dernier pas avec un arbre trinomial à n pas : VI en N ou Black-Scholes en N-1 (console)
-    def print_last_step(self, n: int):
-        tree: Tree = self.tree(n, True, self.mkt0)
-        for call_put in (CALL, PUT):
-            for ex in (EURO, AMER):
-                opt: OptionTrade = self.option(call_put, ex)
-                print("  ", opt, ": VI", round(tree.price_option(opt), 6),
-                      " option", round(tree.price_option(opt, True), 6))
-        print("   Black-Scholes call :", self.bs_price(self.option(CALL, EURO)))
-
-    # ==================== exercice américain (graphes 3 et 8) ====================
+    # ==================== exercice américain (graphe 3) ====================
 
     # graphe 3 : américaine - européenne en fonction du taux, call et put, sans et avec dividende
     def rate_graph(self, n: int, r_min: float, r_max: float, r_jump: float) -> Figure:
@@ -304,57 +278,7 @@ class Study(object):
         tree: Tree = self.tree(n, True, mkt)
         return tree.price_option(self.option(call_put, AMER)) - tree.price_option(self.option(call_put, EURO))
 
-    # graphe 8 : probabilité d'exercice par date des options américaines, arbre trinomial à n pas
-    def exercise_graph(self, n: int) -> Figure:
-        curves: dict = {}
-        for call_put, mkt in ((PUT, self.mkt0), (PUT, self.mkt), (CALL, self.mkt)):
-            name: str = call_put + " américain, dividende " + str(mkt.div_amount)
-            curves[name] = self.exercise_probas(self.tree(n, True, mkt), self.option(call_put, AMER))
-        return self.figure("Probabilité d'exercice par date (" + str(n) + " pas)", "Date", curves)
-
-    # dates du tronc et proba d'exercice à chaque date, après le pricing de opt
-    def exercise_probas(self, tree: TrinomialTree, opt: OptionTrade) -> tuple:
-        tree.price_option(opt)
-        dates: list = []
-        probas: list = []
-        trunk: TrinomialTrunkNode = tree.root
-        while trunk is not None:
-            dates.append(trunk.column_date)
-            probas.append(tree.column_exercise_proba(trunk, opt))
-            trunk = trunk.next_mid
-        return dates, probas
-
-    # ==================== dividende (graphes 9 et 10) ====================
-
-    # graphe 9 : prix en fonction de la date ex-div (tous les day_jump jours), arbre trinomial à n pas
-    def ex_date_graph(self, n: int, day_jump: int) -> Figure:
-        dates: list = []
-        d: datetime.datetime = self.mdl.price_date + datetime.timedelta(days=day_jump)
-        while d <= self.opt.mat_date:
-            dates.append(d)
-            d = d + datetime.timedelta(days=day_jump)
-        trees: list = [self.tree(n, True, self.market(ex_date=d)) for d in dates]
-        curves: dict = {}
-        for call_put in (CALL, PUT):
-            for ex in (EURO, AMER):
-                opt: OptionTrade = self.option(call_put, ex)
-                curves[call_put + " " + ex] = (dates, [t.price_option(opt) for t in trees])
-        return self.figure("Prix en fonction de la date ex-dividende", "Date ex-dividende", curves)
-
-    # graphe 10 : tronc de l'arbre trinomial à n pas, la chute du dividende à la date ex-div
-    def trunk_graph(self, n: int) -> Figure:
-        trunk: TrinomialTrunkNode = self.tree(n, True, self.mkt).root
-        dates: list = []
-        prices: list = []
-        while trunk is not None:
-            dates.append(trunk.column_date)
-            prices.append(trunk.under_price)
-            trunk = trunk.next_mid
-        fig: Figure = self.figure("Tronc de l'arbre trinomial (prix forward)", "Date",
-                                  {"tronc": (dates, prices)})
-        fig.axes[0].axvline(self.mkt.div_ex_date, color="red", linestyle="--", label="date ex-dividende")
-        fig.axes[0].legend()
-        return fig
+    # ==================== dividende ====================
 
     # effet du dividende avec un taux = 0 : call et put européens sans et avec dividende (console)
     def print_dividend_effect(self, n: int):
@@ -365,34 +289,7 @@ class Study(object):
             print("   dividende", div, ": call", round(call, 6), " put", round(put, 6),
                   " call - put", round(call - put, 6))
 
-    # put européen avec un dividende div payé à ex_date, comparé à deux puts sans dividende (BS) :
-    # spot - dividende actualisé (exact pour un dividende demain)
-    # strike + dividende capitalisé (exact pour un dividende juste avant la maturité)
-    def print_dividend_approximation(self, n: int, div: float, ex_date: datetime.datetime):
-        r: float = self.mkt.int_rate
-        t_ex: float = (ex_date - self.mdl.price_date).days / 365
-        t_mat: float = (self.opt.mat_date - self.mdl.price_date).days / 365
-        put: OptionTrade = self.option(PUT, EURO)
-        tree_price: float = self.tree(n, True, self.market(div=div, ex_date=ex_date)).price_option(put)
-        spot: float = self.mkt.spot_price - div * math.exp(-r * t_ex)
-        mkt_spot: Market = Market(spot, self.mkt.volatility, r, 0.0, ex_date)
-        spot_price: float = BlackScholes(mkt_spot, self.mdl.price_date, put).price()
-        strike: float = put.strike + div * math.exp(r * (t_mat - t_ex))
-        strike_price: float = self.bs_price(self.option(PUT, EURO, strike))
-        print("   ex-div", ex_date.date(), ": arbre", round(tree_price, 6), " spot - dividende",
-              round(spot_price, 6), " strike + dividende", round(strike_price, 6))
-
-    # ==================== arbres et grecques (graphe 12) ====================
-
-    # arbres sans dividende à n pas : binomial, trinomial, trinomial avec l'espace du binomial (console)
-    def print_tree_comparison(self, n: int):
-        mdl: Model = Model(self.mdl.price_date, n)
-        tri_bin: TrinomialTree = TrinomialTree(self.mkt0, mdl, self.opt.mat_date, True)
-        tri_bin.build_tree()
-        print("   binomial                    :", self.tree(n, False, self.mkt0).price_option(self.opt))
-        print("   trinomial                   :", self.tree(n, True, self.mkt0).price_option(self.opt))
-        print("   trinomial, espace binomial  :", tri_bin.price_option(self.opt))
-        print("   Black-Scholes               :", self.bs_price(self.opt))
+    # ==================== grecques (graphe 12) ====================
 
     # graphe 12 : delta de l'arbre trinomial en fonction du nombre de pas, avec les deux méthodes,
     # comparé à Black-Scholes
@@ -466,7 +363,7 @@ class Study(object):
             line.set_marker(".")  # un point par date : une date d'exercice isolée reste visible
         fig.axes[0].axvline(self.mkt.div_ex_date, color="grey", linestyle="--", label="date ex-dividende")
         fig.axes[0].axhline(opt.strike, color="black", linestyle=":", label="strike")
-        fig.axes[0].legend()
+        fig.axes[0].legend(loc="upper left")  # en haut à gauche : la légende ne cache pas la courbe
         return fig
 
     # prix critique S* à chaque date, et True s'il y a au moins un exercice avant la maturité
@@ -500,3 +397,52 @@ class Study(object):
         if n is None:
             return None
         return n.under_price
+
+    # ==================== compléments : vus en cours, hors énoncé (graphes 6, 11 et 8) ====================
+
+    # graphe 6 : dernier pas, (prix - Black-Scholes) x pas pour les quatre méthodes
+    def last_step_graph(self, n_list: list) -> Figure:
+        bs: float = self.bs_price(self.opt)
+        curves: dict = {}
+        for name in Study.LAST_STEP_METHODS:
+            trinomial, last_step_bs = Study.LAST_STEP_METHODS[name]
+            gaps: list = [(self.tree(n, trinomial, self.mkt0).price_option(self.opt, last_step_bs) - bs) * n
+                          for n in n_list]
+            curves[name] = (n_list, gaps)
+            print("  ", name, ": écart x pas à", n_list[-1], "pas =", round(gaps[-1], 6))
+        return self.figure("Dernier pas : (prix arbre - Black-Scholes) x nombre de pas", "Nombre de pas",
+                           curves, True)
+
+    # graphe 11 : dernier pas, écart avec Black-Scholes en fonction du strike, arbres à n pas
+    def last_step_strike_graph(self, n: int, k_min: float, k_max: float, k_jump: float) -> Figure:
+        strikes: list = values_between(k_min, k_max, k_jump)
+        curves: dict = {}
+        for name in Study.LAST_STEP_METHODS:
+            trinomial, last_step_bs = Study.LAST_STEP_METHODS[name]
+            tree: Tree = self.tree(n, trinomial, self.mkt0)
+            curves[name] = (strikes, [tree.price_option(self.option(strike=k), last_step_bs)
+                                      - self.bs_price(self.option(strike=k)) for k in strikes])
+        return self.figure("Dernier pas : prix arbre - Black-Scholes (" + str(n) + " pas)", "Strike", curves)
+
+    # graphe 8 : proba d'être dans la zone d'exercice, par date, options américaines, arbre trinomial à n pas
+    def exercise_graph(self, n: int) -> Figure:
+        curves: dict = {}
+        for call_put, mkt in ((PUT, self.mkt0), (PUT, self.mkt), (CALL, self.mkt)):
+            name: str = call_put + " américain, dividende " + str(mkt.div_amount)
+            curves[name] = self.exercise_probas(self.tree(n, True, mkt), self.option(call_put, AMER))
+        return self.figure("Probabilité d'être dans la zone d'exercice, par date (" + str(n) + " pas)",
+                           "Date", curves)
+
+    # dates du tronc et proba d'être dans la zone d'exercice à chaque date, après le pricing de opt
+    # (somme des probas des noeuds exercés, comme dans le cours : ce n'est pas la proba d'exercer
+    # pour la première fois à cette date, car un chemin a pu être exercé avant)
+    def exercise_probas(self, tree: TrinomialTree, opt: OptionTrade) -> tuple:
+        tree.price_option(opt)
+        dates: list = []
+        probas: list = []
+        trunk: TrinomialTrunkNode = tree.root
+        while trunk is not None:
+            dates.append(trunk.column_date)
+            probas.append(tree.column_exercise_proba(trunk, opt))
+            trunk = trunk.next_mid
+        return dates, probas

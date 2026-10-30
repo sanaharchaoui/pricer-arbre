@@ -32,14 +32,6 @@ class VectorImage:
         return svg.Circle(cx=center_x, cy=center_y, r=radius, stroke=stroke_color, fill=fill_color,
                           stroke_width=stroke_width, opacity=opacity)
 
-    # fait un rectangle
-    @staticmethod
-    def rectangle(top_left_x: int, top_left_y: int, width: int, height: int, stroke_color: str,
-                  fill_color: str, stroke_width: int, rounded_corner: int = 0,
-                  opacity: float = 1.0) -> svg.Rect:
-        return svg.Rect(x=top_left_x, y=top_left_y, width=width, height=height, rx=rounded_corner,
-                        stroke=stroke_color, fill=fill_color, stroke_width=stroke_width, opacity=opacity)
-
     # fait un segment
     @staticmethod
     def segment(p1_x: int, p1_y: int, p2_x: int, p2_y: int, stroke_color: str, stroke_width: int,

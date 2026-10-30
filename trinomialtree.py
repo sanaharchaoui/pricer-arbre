@@ -13,11 +13,9 @@ from trinomialtrunknode import TrinomialTrunkNode
 # arbre trinomial : même pricing backward que le Tree binomial (price_option), seule la construction change
 class TrinomialTree(Tree):
 
-    # binomial_alpha : espace entre les noeuds comme le binomial
     # around_root : l'arbre commence un pas avant la date de pricing, pour avoir trois noeuds
     # (up, milieu, down) à la date de pricing : ils servent au delta et au gamma
-    def __init__(self, mkt: Market, mdl: Model, mat: datetime.datetime, binomial_alpha: bool = False,
-                 around_root: bool = False):
+    def __init__(self, mkt: Market, mdl: Model, mat: datetime.datetime, around_root: bool = False):
         self.around_root: bool = around_root
         # noeuds dont une proba de transition est négative (comptés pendant la construction) :
         # leur nombre et la somme de leurs probas d'atteinte
@@ -26,7 +24,8 @@ class TrinomialTree(Tree):
         # seuil de pruning sur la proba d'atteindre un noeud, 0 = pas de pruning
         self.prune_proba: float = mdl.prune_proba
         Tree.__init__(self, mkt, mdl, mat)
-        self.alpha: float = self.space_between_nodes(binomial_alpha)
+        # espace entre les noeuds : racine(3) écarts-types sur un pas (Hull & White, cours p. 12 et 14)
+        self.alpha: float = math.exp(mkt.volatility * math.sqrt(3 * self.delta_t))
 
     # l'arbre trinomial gère le dividende discret
     def handles_dividend(self) -> bool:
@@ -52,12 +51,6 @@ class TrinomialTree(Tree):
         if self.around_root:
             return self.root.next_mid
         return self.root
-
-    # espace entre les noeuds : sqrt(3) écarts-types (Hull & White), ou celui du binomial au carré
-    def space_between_nodes(self, binomial_alpha: bool) -> float:
-        if binomial_alpha:
-            return self.sqrt_alpha ** 2
-        return math.exp(self.mkt.volatility * math.sqrt(3 * self.delta_t))
 
     # le tronc passe par les noeuds du milieu, date par date
     # contrainte du modèle : probas positives, on prévient si des noeuds probables ne la respectent pas
@@ -90,7 +83,8 @@ class TrinomialTree(Tree):
     # le noeud du milieu de n est le noeud suivant le plus proche de son espérance
     def link_node(self, n: TrinomialNode, guess: TrinomialNode, trunk: TrinomialTrunkNode):
         e: float = n.expectation(trunk)
-        if n.proba < self.prune_proba:
+        # seuil à 0 : jamais de pruning, même si une proba d'atteinte devient un peu négative
+        if self.prune_proba > 0 and n.proba < self.prune_proba:
             self.link_pruned_node(n, guess, e)
         else:
             n.next_mid = self.closest_node(guess, e)
@@ -139,8 +133,8 @@ class TrinomialTree(Tree):
     def negative_proba_weight(self) -> float:
         return self.negative_weight
 
-    # proba d'exercice sur la colonne de ce tronc, après le pricing de opt :
-    # somme des probas des noeuds où l'option est exercée
+    # proba d'être dans la zone d'exercice sur la colonne de ce tronc, après le pricing de opt :
+    # somme des probas des noeuds où l'option est exercée (ce n'est pas la proba d'un premier exercice)
     def column_exercise_proba(self, trunk: TrinomialTrunkNode, opt: OptionTrade) -> float:
         proba: float = 0.0
         n: TrinomialNode = trunk

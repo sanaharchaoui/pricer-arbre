@@ -18,6 +18,9 @@ class TrinomialNode(Node):
         self.proba: float = 0.0
 
     # dividende payé sur ce noeud : 0 sur les noeuds improbables où l'action vaut moins que le dividende
+    # hypothèse du projet (le cours n'en parle pas) : sinon le prix après dividende serait négatif
+    # limite : avec un gros dividende, l'espérance de S n'est plus S - dividende actualisé
+    # (le call avec K = 0 vaut alors un peu plus que S - D actualisé)
     def dividend(self, trunk: TrinomialTrunkNode) -> float:
         if self.forward() <= trunk.div * trunk.div_cap:
             return 0.0

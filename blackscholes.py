@@ -40,6 +40,11 @@ class BlackScholes(object):
         s: float = self.mkt.spot_price
         k: float = self.opt.strike
         df: float = math.exp(-self.mkt.int_rate * self.mat_time)
+        # strike nul : le call vaut le spot, le put ne vaut rien (on évite log(S / 0))
+        if k == 0.0:
+            if self.opt.is_a_call():
+                return s
+            return 0.0
         if self.opt.is_a_call():
             return s * self.norm_cdf(self.d1()) - k * df * self.norm_cdf(self.d2())
         return k * df * self.norm_cdf(-self.d2()) - s * self.norm_cdf(-self.d1())

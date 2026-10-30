@@ -65,6 +65,13 @@ try:
 except ValueError as error:
     print("binomial avec dividende :", error)
 
+# même vérification avec le dividende (arbre trinomial) : call avec K = 0 vaut S - dividende actualisé
+tri_k0 = TrinomialTree(mkt_div, mdl, maturity)
+tri_k0.build_tree()
+t_ex = (div_ex_date - mdl.price_date).total_seconds() / 86400 / 365
+s_minus_div = mkt_div.spot_price - mkt_div.div_amount * math.exp(-mkt_div.int_rate * t_ex)
+print("call avec K = 0 et dividende, écart avec S - D actualisé :", tri_k0.price_option(call_k0) - s_minus_div)
+
 # 2. arbre trinomial avec dividende, call américain : exercice juste avant la date ex-div
 print("============= Arbre trinomial avec dividende, call américain =============")
 amer_call = OptionTrade(maturity, OptionTrade.CALL_LABEL, OptionTrade.AMER_LABEL, 101.0)
@@ -76,8 +83,23 @@ TreeImage(1280, 800, tri_tree, amer_call).save('04_arbre_trinomial_dividende.svg
 # monitoring du même arbre avec un call européen : somme des probas = 1, S moyen = tronc,
 # valeur moyenne actualisée de l'option = prix de la racine à chaque date
 print("============= Monitoring de l'arbre trinomial, call européen =============")
-print("prix :", tri_tree.price_option(opt), " noeuds avec une proba négative :", tri_tree.negative_nodes)
+print("prix :", tri_tree.price_option(opt), " noeuds avec une proba négative :", tri_tree.negative_nodes,
+      " proba totale de ces noeuds :", tri_tree.negative_proba_weight())
 tri_tree.print_monitoring(1)
+
+# dividende trop grand (50 pour un spot de 100) : sur la date du dividende, la variance demandée
+# ne colle plus avec l'espace entre les noeuds et des probas de transition deviennent négatives ;
+# le prix n'est alors plus fiable. Le call K = 0 ne le voit pas : les probas, même négatives,
+# respectent toujours l'espérance. C'est pour ça qu'on compte ces noeuds.
+print("============= Dividende trop grand : probas négatives =============")
+big_div = Market(100.0, 0.20, 0.03, 50.0, div_ex_date)
+big_tree = TrinomialTree(big_div, mdl, maturity)
+big_tree.build_tree()
+big_s_minus_div = big_div.spot_price - big_div.div_amount * math.exp(-big_div.int_rate * t_ex)
+print("noeuds avec une proba négative :", big_tree.negative_nodes,
+      " proba totale de ces noeuds :", round(big_tree.negative_proba_weight(), 6))
+print("call avec K = 0, écart avec S - D actualisé :", big_tree.price_option(call_k0) - big_s_minus_div)
+big_tree = None
 
 
 #  =============== ÉTUDES SUR LES ARBRES BINOMIAL ET TRINOMIAL ===============
@@ -105,9 +127,13 @@ study.print_exponents("trinomial", 100, True)
 study.print_exponents("trinomial avec pruning", 100, True)
 save(study.run_time_graph(["binomial", "trinomial", "trinomial avec pruning"], 100), '14_temps_calcul.png')
 
-# nombre de pas choisi à partir d'une précision voulue sur le prix (formule de l'erreur)
-print("============= Nombre de pas pour une précision donnée =============")
-study.print_precision([0.05, 0.01, 0.005])
+# zoom de 1000 à 1100 pas, tous les pas : on voit la vraie forme de l'écart (pas de fausse oscillation)
+# trinomial avec pruning pour aller plus vite : même prix que sans pruning à 1e-8 près (voir plus haut)
+print("============= Zoom de 1000 à 1100 pas (graphe 1b) =============")
+zoom_steps = list(range(1000, 1101))
+study.convergence("binomial zoom", zoom_steps, False)
+study.convergence("trinomial zoom", zoom_steps, True, prune_proba)
+save(study.convergence_zoom_graph(), '01b_convergence_zoom.png')
 
 # écart avec Black-Scholes selon le strike : en arches, avec un minimum sur chaque noeud de la maturité
 print("============= Écart avec Black-Scholes en fonction du strike, 10 pas (graphe 2) =============")
@@ -122,38 +148,9 @@ print("============= Pruning : effet sur le temps de calcul (graphe 5) =========
 study.print_pruning_effect(1000, prune_proba)
 save(study.pruning_graph([10, 20, 50, 100, 200, 300, 500, 700, 1000], prune_proba), '05_pruning_temps.png')
 
-# dernier pas : valeur intrinsèque en N ou Black-Scholes sur delta_t en N-1
-print("============= Dernier pas : VI en N ou Black-Scholes en N-1 (graphes 6 et 11) =============")
-study.print_last_step(100)
-save(study.last_step_graph([1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 700, 1000]),
-     '06_dernier_pas.png')
-save(study.last_step_strike_graph(10, 70.0, 130.0, 0.25), '11_dernier_pas_strike.png')
-
-# probabilité d'exercice des options américaines, date par date
-print("============= Probabilité d'exercice par date, 20 pas (graphe 8) =============")
-save(study.exercise_graph(20), '08_proba_exercice.png')
-
-# prix des options quand la date ex-dividende bouge, tous les 7 jours
-print("============= Effet de la date ex-dividende, 100 pas (graphe 9) =============")
-save(study.ex_date_graph(100, 7), '09_date_ex_dividende.png')
-
-# tronc de l'arbre trinomial : chute du prix à la date ex-dividende
-print("============= Tronc de l'arbre trinomial avec dividende, 100 pas (graphe 10) =============")
-save(study.trunk_graph(100), '10_tronc_dividende.png')
-
 # effet du dividende avec un taux = 0 : la parité donne call - put = S - D - K
 print("============= Effet du dividende sur le call et le put, taux = 0, 100 pas =============")
 study.print_dividend_effect(100)
-
-# put avec dividende comparé à deux approximations sans dividende (spot - D et strike + D)
-print("============= Put avec dividende de 4, comparé à des puts sans dividende, 500 pas =============")
-study.print_dividend_approximation(500, 4.0, mdl.price_date + datetime.timedelta(days=1))
-study.print_dividend_approximation(500, 4.0, datetime.datetime(2027, 3, 1))
-study.print_dividend_approximation(500, 4.0, maturity - datetime.timedelta(days=1))
-
-# même option avec le binomial, le trinomial et le trinomial avec l'espace du binomial
-print("============= Arbres sans dividende, 100 pas =============")
-study.print_tree_comparison(100)
 
 # grecques de l'arbre comparées à Black-Scholes (option de l'étude et call OTM), puis le delta selon N
 print("============= Grecques de l'arbre trinomial (graphe 12) =============")
@@ -178,10 +175,15 @@ print("Black-Scholes en N-1 :", big_tree.price_option(prof_call, True), " Excel 
 print("noeuds :", big_tree.count_nodes())
 big_tree = None
 
-# monitoring avec pruning et dividende, 1000 pas : la somme des probas reste 1 à chaque date
-print("============= Monitoring avec pruning et dividende, 1000 pas =============")
-pruned_tree = TrinomialTree(mkt_div, Model(mdl.price_date, 1000, prune_proba), maturity)
-pruned_tree.build_tree()
-euro_put = OptionTrade(maturity, OptionTrade.PUT_LABEL, OptionTrade.EURO_LABEL, 100.0)
-print("prix :", pruned_tree.price_option(euro_put))
-pruned_tree.print_monitoring(250)
+
+#  =============== COMPLÉMENTS : VUS EN COURS, HORS ÉNONCÉ ===============
+
+# dernier pas : valeur intrinsèque en N ou Black-Scholes sur delta_t en N-1 (cours p. 29-31)
+print("============= Dernier pas : VI en N ou Black-Scholes en N-1 (graphes 6 et 11) =============")
+save(study.last_step_graph([1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 700, 1000]),
+     '06_dernier_pas.png')
+save(study.last_step_strike_graph(10, 70.0, 130.0, 0.25), '11_dernier_pas_strike.png')
+
+# proba d'être dans la zone d'exercice des options américaines, date par date (cours p. 24)
+print("============= Probabilité d'être dans la zone d'exercice, par date, 20 pas (graphe 8) =============")
+save(study.exercise_graph(20), '08_proba_exercice.png')
